@@ -1,0 +1,24 @@
+# SmartCart AI Service Dependencies
+
+# Web framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+
+# Sentence-BERT for semantic embeddings
+sentence-transformers==2.2.2
+transformers==4.30.2
+huggingface-hub==0.16.4
+tokenizers==0.13.3
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.2.2
+torchvision==0.17.2
+
+# Data processing
+numpy<2
+pydantic>=2.0.0
+
+# Async support
+httpx>=0.25.0
+
+# Logging and monitoring
+python-json-logger>=2.0.0

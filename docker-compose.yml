@@ -1,0 +1,137 @@
+# SmartCart - Docker Compose Configuration
+# Microservices Architecture: Next.js + NestJS + FastAPI + PostgreSQL + Redis
+# As specified in PPRS document
+
+services:
+  # ==================== DATABASE SERVICES ====================
+  
+  # PostgreSQL with pgvector extension for vector similarity search
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: smartcart-postgres
+    environment:
+      POSTGRES_USER: smartcart
+      POSTGRES_PASSWORD: smartcart_password
+      POSTGRES_DB: smartcart
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartcart"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - smartcart-network
+
+  # Redis for caching and BullMQ job queue
+  redis:
+    image: redis:7-alpine
+    container_name: smartcart-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - smartcart-network
+
+  # ==================== AI SERVICE (FastAPI + Sentence-BERT) ====================
+  
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: smartcart-ai
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 120s
+    networks:
+      - smartcart-network
+    deploy:
+      resources:
+        limits:
+          memory: 4G  # Sentence-BERT model requires significant memory
+
+  # ==================== BACKEND ORCHESTRATOR (NestJS) ====================
+  
+  # Note: For this implementation, we're using the existing tRPC backend
+  # which connects to the FastAPI AI service. A full NestJS implementation
+  # would be a separate service.
+  
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: smartcart-backend
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://smartcart:smartcart_password@postgres:5432/smartcart
+      - REDIS_URL=redis://redis:6379
+      - AI_SERVICE_URL=http://ai-service:8000
+      - JWT_SECRET=${JWT_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ai-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - smartcart-network
+
+  # ==================== FRONTEND (Next.js) ====================
+  
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: smartcart-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://backend:3001
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - smartcart-network
+
+# ==================== VOLUMES ====================
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+# ==================== NETWORKS ====================
+
+networks:
+  smartcart-network:
+    driver: bridge

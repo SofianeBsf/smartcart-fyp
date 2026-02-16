@@ -1,0 +1,44 @@
+# dependencies
+node_modules/
+.pnpm-store/
+.pnpm-debug.log*
+
+# builds
+dist/
+build/
+.out/
+.next/
+coverage/
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# datasets / dumps
+*.csv
+*.parquet
+*.feather
+*.sqlite
+*.db
+*.sql.gz
+data/
+dataset/
+datasets/
+uploads/
+storage/
+
+# logs
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
