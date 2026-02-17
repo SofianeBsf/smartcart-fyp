@@ -61,7 +61,6 @@ export const products = pgTable("products", {
   rating: decimal("rating", { precision: 3, scale: 2 }),
   reviewCount: integer("review_count").default(0),
 
-  // Use the Postgres enum you already have: availability
   availability: availabilityEnum("availability").default("in_stock"),
   stockQuantity: integer("stock_quantity").default(100),
 
@@ -76,11 +75,6 @@ export type Product = typeof products.$inferSelect;
 export type InsertProduct = typeof products.$inferInsert;
 
 /**
- * Product embeddings table storing vector representations.
- * IMPORTANT:
- * Your DB currently stores embedding as `vector(384)` inside products (pgvector),
- * NOT as jsonb in a separate table. So keep this table only if you actually created it.
- *
  * If you DON'T have `product_embeddings` table in Postgres, remove this block.
  */
 export const productEmbeddings = pgTable("product_embeddings", {
@@ -116,8 +110,7 @@ export type Session = typeof sessions.$inferSelect;
 export type InsertSession = typeof sessions.$inferInsert;
 
 /**
- * Session interactions for session-based recommendations.
- * NOTE: your DB table is `interactions` not `session_interactions`.
+ * Your DB table is `interactions`
  */
 export const interactions = pgTable("interactions", {
   id: serial("id").primaryKey(),
@@ -134,6 +127,14 @@ export const interactions = pgTable("interactions", {
 
 export type Interaction = typeof interactions.$inferSelect;
 export type InsertInteraction = typeof interactions.$inferInsert;
+
+/**
+ * ✅ COMPAT EXPORT (FIXES YOUR DOCKER BUILD)
+ * server/db.ts imports `sessionInteractions`, so we alias it to `interactions`.
+ */
+export const sessionInteractions = interactions;
+export type SessionInteraction = Interaction;
+export type InsertSessionInteraction = InsertInteraction;
 
 /**
  * Ranking weights configuration for the explainable AI formula.
