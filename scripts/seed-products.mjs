@@ -357,7 +357,7 @@ async function seedProducts() {
   for (const product of sampleProducts) {
     try {
       await client.query(
-        `INSERT INTO products ("title", "description", "category", "subcategory", "imageUrl", "price", "originalPrice", "currency", "rating", "reviewCount", "availability", "stockQuantity", "brand", "features", "isFeatured", "createdAt", "updatedAt")
+        `INSERT INTO products (title, description, category, subcategory, image_url, price, original_price, currency, rating, review_count, availability, stock_quantity, brand, features, is_featured, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15, NOW(), NOW())`,
         [
           product.title,
@@ -386,7 +386,7 @@ async function seedProducts() {
   // Create default ranking weights if not exists
   try {
     await client.query(
-      `INSERT INTO ranking_weights ("name", "alpha", "beta", "gamma", "delta", "epsilon", "isActive", "createdAt", "updatedAt")
+      `INSERT INTO ranking_weights (name, alpha, beta, gamma, delta, epsilon, is_active, created_at, updated_at)
        VALUES ('default', '0.500', '0.200', '0.150', '0.100', '0.050', TRUE, NOW(), NOW())
        ON CONFLICT DO NOTHING`
     );

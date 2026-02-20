@@ -101,7 +101,7 @@ services:
       - smartcart-network
 
   # ==================== FRONTEND (Next.js) ====================
-  
+
   frontend:
     build:
       context: .
@@ -111,11 +111,17 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_API_URL=http://backend:3001
+      - PORT=3000
+      - NEXT_PUBLIC_API_URL=http://localhost:3001
+      - DATABASE_URL=postgresql://smartcart:smartcart_password@postgres:5432/smartcart
+      - REDIS_URL=redis://redis:6379
+      - AI_SERVICE_URL=http://ai-service:8000
+      - JWT_SECRET=${JWT_SECRET}
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s
       timeout: 10s
       retries: 3

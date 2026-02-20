@@ -49,13 +49,13 @@ async function generateAllEmbeddings() {
 
       // Insert or update embedding
       await client.query(
-        `INSERT INTO product_embeddings ("productId", embedding, "embeddingModel", "textUsed", "createdAt", "updatedAt")
+        `INSERT INTO product_embeddings (product_id, embedding, embedding_model, text_used, created_at, updated_at)
          VALUES ($1, $2, 'all-MiniLM-L6-v2', $3, NOW(), NOW())
-         ON CONFLICT ("productId") DO UPDATE SET
-         embedding = EXCLUDED.embedding,
-         "embeddingModel" = EXCLUDED."embeddingModel",
-         "textUsed" = EXCLUDED."textUsed",
-         "updatedAt" = NOW()`,
+         ON CONFLICT (product_id) DO UPDATE SET
+           embedding = EXCLUDED.embedding,
+           embedding_model = EXCLUDED.embedding_model,
+           text_used = EXCLUDED.text_used,
+           updated_at = NOW()`,
         [product.id, JSON.stringify(embedding), textToEmbed.slice(0, 1000)]
       );
 
