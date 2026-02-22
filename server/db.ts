@@ -18,6 +18,26 @@ let _db: ReturnType<typeof drizzle> | null = null;
 
 
 let _legacyProductColumnsBackfilled = false;
+let _legacyEmbeddingColumnsBackfilled = false;
+let _embeddingTableEnsured = false;
+
+async function ensureProductEmbeddingsTableExists(db: ReturnType<typeof drizzle>) {
+  if (_embeddingTableEnsured) return;
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS product_embeddings (
+      id serial PRIMARY KEY,
+      product_id integer NOT NULL UNIQUE,
+      embedding jsonb NOT NULL,
+      embedding_model varchar(100) DEFAULT 'all-MiniLM-L6-v2',
+      text_used text,
+      created_at timestamp DEFAULT now() NOT NULL,
+      updated_at timestamp DEFAULT now() NOT NULL
+    );
+  `);
+
+  _embeddingTableEnsured = true;
+}
 
 async function backfillLegacyProductColumns(db: ReturnType<typeof drizzle>) {
   if (_legacyProductColumnsBackfilled) return;
@@ -115,11 +135,75 @@ async function backfillLegacyProductColumns(db: ReturnType<typeof drizzle>) {
   _legacyProductColumnsBackfilled = true;
 }
 
+async function backfillLegacyEmbeddingColumns(db: ReturnType<typeof drizzle>) {
+  if (_legacyEmbeddingColumnsBackfilled) return;
+
+  await db.execute(sql`
+    DO $$
+    BEGIN
+      -- Bring legacy camelCase embedding columns to canonical snake_case names.
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'product_embeddings' AND column_name = 'productId'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'product_embeddings' AND column_name = 'product_id'
+      ) THEN
+        ALTER TABLE product_embeddings RENAME COLUMN "productId" TO product_id;
+      END IF;
+
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'product_embeddings' AND column_name = 'embeddingModel'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'product_embeddings' AND column_name = 'embedding_model'
+      ) THEN
+        ALTER TABLE product_embeddings RENAME COLUMN "embeddingModel" TO embedding_model;
+      END IF;
+
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'product_embeddings' AND column_name = 'textUsed'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'product_embeddings' AND column_name = 'text_used'
+      ) THEN
+        ALTER TABLE product_embeddings RENAME COLUMN "textUsed" TO text_used;
+      END IF;
+
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'product_embeddings' AND column_name = 'createdAt'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'product_embeddings' AND column_name = 'created_at'
+      ) THEN
+        ALTER TABLE product_embeddings RENAME COLUMN "createdAt" TO created_at;
+      END IF;
+
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'product_embeddings' AND column_name = 'updatedAt'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'product_embeddings' AND column_name = 'updated_at'
+      ) THEN
+        ALTER TABLE product_embeddings RENAME COLUMN "updatedAt" TO updated_at;
+      END IF;
+    END $$;
+  `);
+
+  _legacyEmbeddingColumnsBackfilled = true;
+}
+
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
       _db = drizzle(process.env.DATABASE_URL);
+      await ensureProductEmbeddingsTableExists(_db);
       await backfillLegacyProductColumns(_db);
+      await backfillLegacyEmbeddingColumns(_db);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
