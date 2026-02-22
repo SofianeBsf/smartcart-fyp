@@ -19,6 +19,25 @@ let _db: ReturnType<typeof drizzle> | null = null;
 
 let _legacyProductColumnsBackfilled = false;
 let _legacyEmbeddingColumnsBackfilled = false;
+let _embeddingTableEnsured = false;
+
+async function ensureProductEmbeddingsTableExists(db: ReturnType<typeof drizzle>) {
+  if (_embeddingTableEnsured) return;
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS product_embeddings (
+      id serial PRIMARY KEY,
+      product_id integer NOT NULL UNIQUE,
+      embedding jsonb NOT NULL,
+      embedding_model varchar(100) DEFAULT 'all-MiniLM-L6-v2',
+      text_used text,
+      created_at timestamp DEFAULT now() NOT NULL,
+      updated_at timestamp DEFAULT now() NOT NULL
+    );
+  `);
+
+  _embeddingTableEnsured = true;
+}
 
 async function backfillLegacyProductColumns(db: ReturnType<typeof drizzle>) {
   if (_legacyProductColumnsBackfilled) return;
@@ -182,6 +201,7 @@ export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
       _db = drizzle(process.env.DATABASE_URL);
+      await ensureProductEmbeddingsTableExists(_db);
       await backfillLegacyProductColumns(_db);
       await backfillLegacyEmbeddingColumns(_db);
     } catch (error) {
