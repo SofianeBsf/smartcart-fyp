@@ -461,44 +461,54 @@ export async function getRecentlyViewedProducts(sessionId: string, limit = 10) {
 
 // ==================== RANKING WEIGHTS OPERATIONS ====================
 
+function defaultRankingWeights() {
+  return {
+    id: 0,
+    name: "default",
+    alpha: "0.500",
+    beta: "0.200",
+    gamma: "0.150",
+    delta: "0.100",
+    epsilon: "0.050",
+    isActive: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+}
+
 export async function getActiveRankingWeights() {
   const db = await getDb();
   if (!db) {
     // Return default weights if DB not available
-    return {
-      id: 0,
-      name: "default",
-      alpha: "0.500",
-      beta: "0.200",
-      gamma: "0.150",
-      delta: "0.100",
-      epsilon: "0.050",
-      isActive: true,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+    return defaultRankingWeights();
   }
-  
-  const result = await db.select()
-    .from(rankingWeights)
-    .where(eq(rankingWeights.isActive, true))
-    .limit(1);
-  
-  if (result.length === 0) {
-    // Create default weights if none exist
-    await db.insert(rankingWeights).values({
-      name: "default",
-      alpha: "0.500",
-      beta: "0.200",
-      gamma: "0.150",
-      delta: "0.100",
-      epsilon: "0.050",
-      isActive: true,
-    });
-    return getActiveRankingWeights();
+
+  try {
+    const result = await db.select()
+      .from(rankingWeights)
+      .where(eq(rankingWeights.isActive, true))
+      .limit(1);
+
+    if (result.length === 0) {
+      // Create default weights if none exist
+      await db.insert(rankingWeights).values({
+        name: "default",
+        alpha: "0.500",
+        beta: "0.200",
+        gamma: "0.150",
+        delta: "0.100",
+        epsilon: "0.050",
+        isActive: true,
+      });
+      return getActiveRankingWeights();
+    }
+
+    return result[0];
+  } catch (error) {
+    // Handle legacy/inconsistent DB schemas (e.g. missing updated_at)
+    console.warn("[Database] Failed to read ranking weights, using defaults:", error);
+    return defaultRankingWeights();
   }
-  
-  return result[0];
 }
 
 export async function updateRankingWeights(id: number, weights: Partial<InsertRankingWeight>) {
