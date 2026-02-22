@@ -9,6 +9,9 @@ export type NotificationPayload = {
 const TITLE_MAX_LENGTH = 1200;
 const CONTENT_MAX_LENGTH = 20000;
 
+let hasLoggedMissingNotificationUrl = false;
+let hasLoggedMissingNotificationApiKey = false;
+
 const trimValue = (value: string): string => value.trim();
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.trim().length > 0;
@@ -69,17 +72,19 @@ export async function notifyOwner(
   const { title, content } = validatePayload(payload);
 
   if (!ENV.forgeApiUrl) {
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "Notification service URL is not configured.",
-    });
+    if (!hasLoggedMissingNotificationUrl) {
+      console.info("[Notification] Skipping owner notification: forgeApiUrl is not configured.");
+      hasLoggedMissingNotificationUrl = true;
+    }
+    return false;
   }
 
   if (!ENV.forgeApiKey) {
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "Notification service API key is not configured.",
-    });
+    if (!hasLoggedMissingNotificationApiKey) {
+      console.info("[Notification] Skipping owner notification: forgeApiKey is not configured.");
+      hasLoggedMissingNotificationApiKey = true;
+    }
+    return false;
   }
 
   const endpoint = buildEndpointUrl(ENV.forgeApiUrl);
