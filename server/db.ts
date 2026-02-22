@@ -580,8 +580,14 @@ export async function getSearchLogsWithResults(limit = 100) {
 export async function saveSearchExplanations(explanations: InsertSearchResultExplanation[]) {
   const db = await getDb();
   if (!db || explanations.length === 0) return;
-  
-  await db.insert(searchResultExplanations).values(explanations);
+
+  try {
+    await db.insert(searchResultExplanations).values(explanations);
+  } catch (error) {
+    // Legacy/inconsistent schemas may miss newer columns (e.g. was_clicked).
+    // Explanation persistence should not break search responses.
+    console.warn("[Database] Failed to save search explanations, continuing without persistence:", error);
+  }
 }
 
 export async function getExplanationsForSearch(searchLogId: number) {
