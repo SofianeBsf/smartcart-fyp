@@ -368,6 +368,21 @@ export async function getProductsWithEmbeddings() {
   .innerJoin(productEmbeddings, eq(products.id, productEmbeddings.productId));
 }
 
+export async function getAllProductsWithOptionalEmbeddings(limit = 1000, offset = 0) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db.select({
+    product: products,
+    embedding: productEmbeddings.embedding,
+  })
+  .from(products)
+  .leftJoin(productEmbeddings, eq(products.id, productEmbeddings.productId))
+  .limit(limit)
+  .offset(offset)
+  .orderBy(desc(products.createdAt));
+}
+
 export async function getEmbeddingCount() {
   const db = await getDb();
   if (!db) return 0;
@@ -446,44 +461,54 @@ export async function getRecentlyViewedProducts(sessionId: string, limit = 10) {
 
 // ==================== RANKING WEIGHTS OPERATIONS ====================
 
+function defaultRankingWeights() {
+  return {
+    id: 0,
+    name: "default",
+    alpha: "0.500",
+    beta: "0.200",
+    gamma: "0.150",
+    delta: "0.100",
+    epsilon: "0.050",
+    isActive: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+}
+
 export async function getActiveRankingWeights() {
   const db = await getDb();
   if (!db) {
     // Return default weights if DB not available
-    return {
-      id: 0,
-      name: "default",
-      alpha: "0.500",
-      beta: "0.200",
-      gamma: "0.150",
-      delta: "0.100",
-      epsilon: "0.050",
-      isActive: true,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+    return defaultRankingWeights();
   }
-  
-  const result = await db.select()
-    .from(rankingWeights)
-    .where(eq(rankingWeights.isActive, true))
-    .limit(1);
-  
-  if (result.length === 0) {
-    // Create default weights if none exist
-    await db.insert(rankingWeights).values({
-      name: "default",
-      alpha: "0.500",
-      beta: "0.200",
-      gamma: "0.150",
-      delta: "0.100",
-      epsilon: "0.050",
-      isActive: true,
-    });
-    return getActiveRankingWeights();
+
+  try {
+    const result = await db.select()
+      .from(rankingWeights)
+      .where(eq(rankingWeights.isActive, true))
+      .limit(1);
+
+    if (result.length === 0) {
+      // Create default weights if none exist
+      await db.insert(rankingWeights).values({
+        name: "default",
+        alpha: "0.500",
+        beta: "0.200",
+        gamma: "0.150",
+        delta: "0.100",
+        epsilon: "0.050",
+        isActive: true,
+      });
+      return getActiveRankingWeights();
+    }
+
+    return result[0];
+  } catch (error) {
+    // Handle legacy/inconsistent DB schemas (e.g. missing updated_at)
+    console.warn("[Database] Failed to read ranking weights, using defaults:", error);
+    return defaultRankingWeights();
   }
-  
-  return result[0];
 }
 
 export async function updateRankingWeights(id: number, weights: Partial<InsertRankingWeight>) {
@@ -555,8 +580,14 @@ export async function getSearchLogsWithResults(limit = 100) {
 export async function saveSearchExplanations(explanations: InsertSearchResultExplanation[]) {
   const db = await getDb();
   if (!db || explanations.length === 0) return;
-  
-  await db.insert(searchResultExplanations).values(explanations);
+
+  try {
+    await db.insert(searchResultExplanations).values(explanations);
+  } catch (error) {
+    // Legacy/inconsistent schemas may miss newer columns (e.g. was_clicked).
+    // Explanation persistence should not break search responses.
+    console.warn("[Database] Failed to save search explanations, continuing without persistence:", error);
+  }
 }
 
 export async function getExplanationsForSearch(searchLogId: number) {

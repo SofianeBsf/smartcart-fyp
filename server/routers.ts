@@ -291,6 +291,51 @@ export const appRouter = router({
           sessionId,
         });
 
+        if (result.results.length === 0) {
+          const keywordProducts = await searchProductsByKeyword(input.query, input.limit);
+
+          const filteredKeywordProducts = keywordProducts.filter((product) => {
+            const productPrice = Number(product.price) || 0;
+
+            if (input.category && product.category?.toLowerCase() !== input.category.toLowerCase()) {
+              return false;
+            }
+            if (input.minPrice !== undefined && productPrice < input.minPrice) {
+              return false;
+            }
+            if (input.maxPrice !== undefined && productPrice > input.maxPrice) {
+              return false;
+            }
+            if (input.inStockOnly && product.availability === "out_of_stock") {
+              return false;
+            }
+
+            return true;
+          });
+
+          return {
+            results: filteredKeywordProducts.map((product, index) => ({
+              product,
+              scores: {
+                final: 0.5,
+                semantic: 0,
+                rating: product.rating ? Number(product.rating) / 5 : 0.5,
+                price: 0.5,
+                stock: product.availability === "out_of_stock" ? 0 : 1,
+                recency: 0.5,
+              },
+              matchedTerms: [],
+              explanation: "Keyword match fallback",
+              position: index + 1,
+            })),
+            searchLogId: result.searchLogId,
+            responseTimeMs: result.responseTimeMs,
+            query: input.query,
+            aiServiceUsed: false,
+            fallbackUsed: "keyword",
+          };
+        }
+
         return {
           results: result.results,
           searchLogId: result.searchLogId,

@@ -1,6 +1,6 @@
 import { invokeLLM } from "./_core/llm";
 import { 
-  getProductsWithEmbeddings, 
+  getAllProductsWithOptionalEmbeddings, 
   getActiveRankingWeights, 
   logSearch, 
   saveSearchExplanations,
@@ -257,8 +257,8 @@ export async function semanticSearch(
   // Generate query embedding
   const queryEmbedding = await generateEmbedding(query);
   
-  // Get all products with embeddings
-  const productsWithEmbeddings = await getProductsWithEmbeddings();
+  // Get all products, with embeddings when available
+  const productsWithEmbeddings = await getAllProductsWithOptionalEmbeddings(5000, 0);
   
   // Get active ranking weights
   const weights = await getActiveRankingWeights();
@@ -277,8 +277,15 @@ export async function semanticSearch(
 
   // Score all products
   let scoredProducts = productsWithEmbeddings.map(({ product, embedding }) => {
-    // Calculate individual scores
-    const semanticScore = embedding ? cosineSimilarity(queryEmbedding, embedding as number[]) : 0;
+    // Calculate individual scores. If an embedding is missing, generate a deterministic fallback embedding
+    // from product text so search still works even before precomputing vectors.
+    const fallbackProductEmbedding = generateDeterministicEmbedding(
+      `${product.title} ${product.description || ""} ${product.category || ""}`
+    );
+    const semanticScore = cosineSimilarity(
+      queryEmbedding,
+      (embedding as number[] | null) ?? fallbackProductEmbedding
+    );
     const ratingScore = normalizeRatingScore(product.rating ? Number(product.rating) : null);
     const priceScore = normalizePriceScore(
       Number(product.price) || 0,
