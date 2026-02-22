@@ -8,6 +8,13 @@
       "when": 1770992601507,
       "tag": "0000_tiresome_wong",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1771777634089,
+      "tag": "0001_slim_vampiro",
+      "breakpoints": true
     }
   ]
 }
