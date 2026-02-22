@@ -368,6 +368,21 @@ export async function getProductsWithEmbeddings() {
   .innerJoin(productEmbeddings, eq(products.id, productEmbeddings.productId));
 }
 
+export async function getAllProductsWithOptionalEmbeddings(limit = 1000, offset = 0) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db.select({
+    product: products,
+    embedding: productEmbeddings.embedding,
+  })
+  .from(products)
+  .leftJoin(productEmbeddings, eq(products.id, productEmbeddings.productId))
+  .limit(limit)
+  .offset(offset)
+  .orderBy(desc(products.createdAt));
+}
+
 export async function getEmbeddingCount() {
   const db = await getDb();
   if (!db) return 0;
