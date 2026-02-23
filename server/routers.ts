@@ -586,20 +586,30 @@ export const appRouter = router({
           generateEmbeddings: z.boolean().default(true),
         }))
         .mutation(async ({ input, ctx }) => {
-          // Create upload job
-          const jobId = await createUploadJob({
-            filename: `batch_upload_${Date.now()}`,
-            status: "processing",
-            totalRows: input.products.length,
-            uploadedBy: ctx.user.id,
-            startedAt: new Date(),
-          });
+          // Create upload job (best effort for legacy DB schemas)
+          let jobId: number | undefined;
+          try {
+            jobId = await createUploadJob({
+              filename: `batch_upload_${Date.now()}`,
+              status: "processing",
+              totalRows: input.products.length,
+              uploadedBy: ctx.user.id,
+              startedAt: new Date(),
+            });
+          } catch (error) {
+            console.warn("[Catalog Upload] Failed to create upload job, continuing without job tracking:", error);
+          }
+
+          const updateJobIfPresent = async (updates: Parameters<typeof updateUploadJob>[1]) => {
+            if (!jobId) return;
+            await updateUploadJob(jobId, updates);
+          };
 
           try {
             // Insert products
             await createProducts(input.products);
             
-            await updateUploadJob(jobId, {
+            await updateJobIfPresent({
               processedRows: input.products.length,
               status: input.generateEmbeddings ? "embedding" : "completed",
             });
@@ -613,32 +623,32 @@ export const appRouter = router({
               
               const embeddingResult = await batchGenerateEmbeddings(newProductIds);
               
-            await updateUploadJob(jobId, {
-              embeddedRows: embeddingResult.success,
-              status: "completed",
-              completedAt: new Date(),
-            });
+              await updateJobIfPresent({
+                embeddedRows: embeddingResult.success,
+                status: "completed",
+                completedAt: new Date(),
+              });
 
               // Notify owner of successful upload with embeddings
               await notifyOwner({
                 title: "📦 SmartCart: Catalog Upload Complete",
-                content: `Successfully uploaded ${input.products.length} products and generated ${embeddingResult.success} embeddings.\n\nJob ID: ${jobId}\nFailed embeddings: ${embeddingResult.failed}`,
+                content: `Successfully uploaded ${input.products.length} products and generated ${embeddingResult.success} embeddings.${jobId ? `\n\nJob ID: ${jobId}` : ""}\nFailed embeddings: ${embeddingResult.failed}`,
               }).catch(err => console.warn("[Notification] Failed to notify owner:", err));
             } else {
-              await updateUploadJob(jobId, {
+              await updateJobIfPresent({
                 completedAt: new Date(),
               });
 
               // Notify owner of successful upload without embeddings
               await notifyOwner({
                 title: "📦 SmartCart: Catalog Upload Complete",
-                content: `Successfully uploaded ${input.products.length} products.\n\nJob ID: ${jobId}\nNote: Embeddings were not generated. Run 'Regenerate All Embeddings' from the admin dashboard to enable semantic search.`,
+                content: `Successfully uploaded ${input.products.length} products.${jobId ? `\n\nJob ID: ${jobId}` : ""}\nNote: Embeddings were not generated. Run 'Regenerate All Embeddings' from the admin dashboard to enable semantic search.`,
               }).catch(err => console.warn("[Notification] Failed to notify owner:", err));
             }
 
-            return { jobId, success: true };
+            return { jobId: jobId ?? null, success: true };
           } catch (error) {
-            await updateUploadJob(jobId, {
+            await updateJobIfPresent({
               status: "failed",
               errorMessage: error instanceof Error ? error.message : "Unknown error",
             });
@@ -646,7 +656,7 @@ export const appRouter = router({
             // Notify owner of upload failure
             await notifyOwner({
               title: "❌ SmartCart: Catalog Upload Failed",
-              content: `Failed to upload catalog.\n\nJob ID: ${jobId}\nError: ${error instanceof Error ? error.message : "Unknown error"}\n\nPlease check the admin dashboard for details.`,
+              content: `Failed to upload catalog.${jobId ? `\n\nJob ID: ${jobId}` : ""}\nError: ${error instanceof Error ? error.message : "Unknown error"}\n\nPlease check the admin dashboard for details.`,
             }).catch(err => console.warn("[Notification] Failed to notify owner:", err));
 
             throw error;

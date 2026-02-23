@@ -347,9 +347,40 @@ function CatalogTab() {
         return;
       }
 
-      const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
+      const parseCsvLine = (line: string) => {
+        const values: string[] = [];
+        let current = "";
+        let inQuotes = false;
+
+        for (let i = 0; i < line.length; i++) {
+          const char = line[i];
+
+          if (char === '"') {
+            if (inQuotes && line[i + 1] === '"') {
+              current += '"';
+              i++;
+            } else {
+              inQuotes = !inQuotes;
+            }
+            continue;
+          }
+
+          if (char === "," && !inQuotes) {
+            values.push(current.trim());
+            current = "";
+            continue;
+          }
+
+          current += char;
+        }
+
+        values.push(current.trim());
+        return values;
+      };
+
+      const headers = parseCsvLine(lines[0]).map(h => h.trim().toLowerCase());
       const products = lines.slice(1).map(line => {
-        const values = line.split(",");
+        const values = parseCsvLine(line);
         const product: any = {};
         
         headers.forEach((header, index) => {
@@ -397,7 +428,8 @@ function CatalogTab() {
       toast.info(`Uploading ${products.length} products...`);
       await uploadCatalog.mutateAsync({ products, generateEmbeddings: true });
     } catch (error) {
-      toast.error("Failed to parse CSV file");
+      const message = error instanceof Error ? error.message : "Failed to upload catalog";
+      toast.error(message.includes("Failed to parse CSV") ? message : `Upload failed: ${message}`);
     }
 
     if (fileInputRef.current) {
