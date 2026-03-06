@@ -57,7 +57,7 @@ export default function AdminDashboard() {
     );
   }
 
-  // In local development, attempt dev-login once to prevent infinite refresh loops.
+  // Redirect unauthenticated users back to home so they can explicitly choose to sign in.
   if (!isAuthenticated || user?.role !== "admin") {
     if (import.meta.env.DEV) {
       const hasAttemptedDevLogin =
@@ -72,7 +72,7 @@ export default function AdminDashboard() {
     }
 
     if (!isAuthenticated) {
-      window.location.href = "/api/auth/dev-login?redirect=/admin";
+      setLocation("/");
       return null;
     }
 
