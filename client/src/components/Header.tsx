@@ -34,8 +34,8 @@ export default function Header() {
   };
 
   const handleLogout = async () => {
-    await logout();
     setLocation("/");
+    await logout();
   };
 
   return (
