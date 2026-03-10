@@ -20,6 +20,36 @@ let _db: ReturnType<typeof drizzle> | null = null;
 let _legacyProductColumnsBackfilled = false;
 let _legacyEmbeddingColumnsBackfilled = false;
 let _embeddingTableEnsured = false;
+let _usersTableEnsured = false;
+
+async function ensureUsersTableExists(db: ReturnType<typeof drizzle>) {
+  if (_usersTableEnsured) return;
+
+  await db.execute(sql`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'role') THEN
+        CREATE TYPE role AS ENUM ('user', 'admin');
+      END IF;
+    END $$;
+  `);
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS users (
+      id serial PRIMARY KEY,
+      open_id varchar(64) NOT NULL UNIQUE,
+      name text,
+      email varchar(320),
+      login_method varchar(64),
+      role role NOT NULL DEFAULT 'user',
+      created_at timestamp NOT NULL DEFAULT now(),
+      updated_at timestamp NOT NULL DEFAULT now(),
+      last_signed_in timestamp NOT NULL DEFAULT now()
+    );
+  `);
+
+  _usersTableEnsured = true;
+}
 
 async function ensureProductEmbeddingsTableExists(db: ReturnType<typeof drizzle>) {
   if (_embeddingTableEnsured) return;
@@ -201,6 +231,7 @@ export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
       _db = drizzle(process.env.DATABASE_URL);
+      await ensureUsersTableExists(_db);
       await ensureProductEmbeddingsTableExists(_db);
       await backfillLegacyProductColumns(_db);
       await backfillLegacyEmbeddingColumns(_db);
