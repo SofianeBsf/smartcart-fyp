@@ -4,6 +4,28 @@
 -- Enable pgvector extension for vector similarity search
 CREATE EXTENSION IF NOT EXISTS vector;
 
+
+-- Auth roles enum + users table for dev login
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'role') THEN
+        CREATE TYPE role AS ENUM ('user', 'admin');
+    END IF;
+END
+$$;
+
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    open_id VARCHAR(64) NOT NULL UNIQUE,
+    name TEXT,
+    email VARCHAR(320),
+    login_method VARCHAR(64),
+    role role NOT NULL DEFAULT 'user',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_signed_in TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
 -- Products table with vector embedding column
 CREATE TABLE IF NOT EXISTS products (
     id SERIAL PRIMARY KEY,
