@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { getLoginUrl } from "@/const";
+import { useCart } from "@/hooks/useCart";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,19 +13,22 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { 
-  Search, 
-  Sparkles, 
-  User, 
-  Settings, 
+import {
+  Search,
+  Sparkles,
+  User,
+  Settings,
   LogOut,
-  LayoutDashboard
+  LayoutDashboard,
+  ShoppingCart,
+  Heart
 } from "lucide-react";
 
 export default function Header() {
   const [searchQuery, setSearchQuery] = useState("");
   const [, setLocation] = useLocation();
   const { user, isAuthenticated, logout } = useAuth();
+  const { totalItems } = useCart();
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,6 +69,33 @@ export default function Header() {
 
         {/* Navigation */}
         <nav className="flex items-center gap-2">
+          {/* Cart Button */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="relative"
+            onClick={() => setLocation("/cart")}
+          >
+            <ShoppingCart className="w-5 h-5" />
+            {totalItems > 0 && (
+              <Badge
+                variant="destructive"
+                className="absolute -top-2 -right-2 h-5 w-5 flex items-center justify-center p-0 text-xs"
+              >
+                {totalItems}
+              </Badge>
+            )}
+          </Button>
+
+          {/* Wishlist Button */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setLocation("/wishlist")}
+          >
+            <Heart className="w-5 h-5" />
+          </Button>
+
           {isAuthenticated && user ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -110,7 +141,7 @@ export default function Header() {
             </DropdownMenu>
           ) : (
             <Button asChild variant="default" size="sm">
-              <a href={getLoginUrl()}>Sign In</a>
+              <Link href="/login">Sign In</Link>
             </Button>
           )}
         </nav>

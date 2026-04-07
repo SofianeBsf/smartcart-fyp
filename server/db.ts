@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { eq, and, desc, sql, inArray } from "drizzle-orm";
-import { 
-  InsertUser, users, 
+import {
+  InsertUser, users,
   products, InsertProduct, Product,
   productEmbeddings, InsertProductEmbedding,
   sessions, InsertSession,
@@ -10,7 +10,9 @@ import {
   searchLogs, InsertSearchLog,
   searchResultExplanations, InsertSearchResultExplanation,
   catalogUploadJobs, InsertCatalogUploadJob,
-  evaluationMetrics, InsertEvaluationMetric
+  evaluationMetrics, InsertEvaluationMetric,
+  cartItems, InsertCartItem,
+  wishlistItems, InsertWishlistItem,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -21,6 +23,7 @@ let _legacyProductColumnsBackfilled = false;
 let _legacyEmbeddingColumnsBackfilled = false;
 let _embeddingTableEnsured = false;
 let _usersTableEnsured = false;
+let _allTablesEnsured = false;
 
 async function ensureUsersTableExists(db: ReturnType<typeof drizzle>) {
   if (_usersTableEnsured) return;
@@ -41,11 +44,22 @@ async function ensureUsersTableExists(db: ReturnType<typeof drizzle>) {
       name text,
       email varchar(320),
       login_method varchar(64),
+      password_hash text,
+      avatar_url text,
       role role NOT NULL DEFAULT 'user',
       created_at timestamp NOT NULL DEFAULT now(),
       updated_at timestamp NOT NULL DEFAULT now(),
       last_signed_in timestamp NOT NULL DEFAULT now()
     );
+  `);
+
+  // Add new columns if they don't exist
+  await db.execute(sql`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash text;
+  `);
+
+  await db.execute(sql`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url text;
   `);
 
   _usersTableEnsured = true;
@@ -227,12 +241,180 @@ async function backfillLegacyEmbeddingColumns(db: ReturnType<typeof drizzle>) {
   _legacyEmbeddingColumnsBackfilled = true;
 }
 
+/**
+ * Ensure all tables exist and have the correct columns.
+ * This handles Neon.tech databases where tables may have been created
+ * with an older schema missing newer columns.
+ */
+async function ensureAllTablesAndColumns(db: ReturnType<typeof drizzle>) {
+  if (_allTablesEnsured) return;
+
+  try {
+    // Ensure ranking_weights table has updated_at column
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS ranking_weights (
+        id serial PRIMARY KEY,
+        name varchar(100) NOT NULL DEFAULT 'default',
+        alpha decimal(4,3) NOT NULL DEFAULT 0.500,
+        beta decimal(4,3) NOT NULL DEFAULT 0.200,
+        gamma decimal(4,3) NOT NULL DEFAULT 0.150,
+        delta decimal(4,3) NOT NULL DEFAULT 0.100,
+        epsilon decimal(4,3) NOT NULL DEFAULT 0.050,
+        is_active boolean DEFAULT true,
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      );
+    `);
+    await db.execute(sql`ALTER TABLE ranking_weights ADD COLUMN IF NOT EXISTS updated_at timestamp DEFAULT now();`);
+
+    // Ensure search_logs table exists
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS search_logs (
+        id serial PRIMARY KEY,
+        session_id varchar(64) NOT NULL,
+        query text NOT NULL,
+        query_embedding jsonb,
+        results_count integer DEFAULT 0,
+        response_time_ms integer,
+        filters jsonb,
+        created_at timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    // Ensure search_result_explanations table has was_clicked column
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS search_result_explanations (
+        id serial PRIMARY KEY,
+        search_log_id integer NOT NULL,
+        product_id integer NOT NULL,
+        position integer NOT NULL,
+        final_score decimal(8,6) NOT NULL,
+        semantic_score decimal(8,6) NOT NULL,
+        rating_score decimal(8,6) NOT NULL,
+        price_score decimal(8,6) NOT NULL,
+        stock_score decimal(8,6) NOT NULL,
+        recency_score decimal(8,6) NOT NULL,
+        matched_terms jsonb,
+        explanation text,
+        was_clicked boolean DEFAULT false,
+        created_at timestamp NOT NULL DEFAULT now()
+      );
+    `);
+    await db.execute(sql`ALTER TABLE search_result_explanations ADD COLUMN IF NOT EXISTS was_clicked boolean DEFAULT false;`);
+
+    // Ensure sessions table
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS sessions (
+        id serial PRIMARY KEY,
+        session_id varchar(64) NOT NULL UNIQUE,
+        user_id integer,
+        created_at timestamp NOT NULL DEFAULT now(),
+        last_active_at timestamp DEFAULT now(),
+        expires_at timestamp NOT NULL
+      );
+    `);
+
+    // Ensure interactions table
+    await db.execute(sql`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'interaction_type') THEN
+          CREATE TYPE interaction_type AS ENUM ('view', 'click', 'search_click', 'add_to_cart', 'purchase');
+        END IF;
+      END $$;
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS interactions (
+        id serial PRIMARY KEY,
+        session_id varchar(64) NOT NULL,
+        product_id integer NOT NULL,
+        interaction_type interaction_type NOT NULL,
+        search_query text,
+        position integer,
+        created_at timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    // Ensure catalog_upload_jobs table
+    await db.execute(sql`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'status') THEN
+          CREATE TYPE status AS ENUM ('pending', 'processing', 'embedding', 'completed', 'failed');
+        END IF;
+      END $$;
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS catalog_upload_jobs (
+        id serial PRIMARY KEY,
+        filename varchar(255) NOT NULL,
+        status status NOT NULL DEFAULT 'pending',
+        total_rows integer DEFAULT 0,
+        processed_rows integer DEFAULT 0,
+        embedded_rows integer DEFAULT 0,
+        error_message text,
+        uploaded_by integer,
+        started_at timestamp,
+        completed_at timestamp,
+        created_at timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    // Ensure evaluation_metrics table
+    await db.execute(sql`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'metric_type') THEN
+          CREATE TYPE metric_type AS ENUM ('ndcg@10', 'recall@10', 'precision@10', 'mrr', 'custom');
+        END IF;
+      END $$;
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS evaluation_metrics (
+        id serial PRIMARY KEY,
+        metric_type metric_type NOT NULL,
+        value decimal(8,6) NOT NULL,
+        query_count integer DEFAULT 0,
+        notes text,
+        evaluated_at timestamp DEFAULT now() NOT NULL,
+        created_at timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    // Ensure cart_items table
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS cart_items (
+        id serial PRIMARY KEY,
+        user_id integer NOT NULL,
+        product_id integer NOT NULL,
+        quantity integer NOT NULL DEFAULT 1,
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    // Ensure wishlist_items table
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS wishlist_items (
+        id serial PRIMARY KEY,
+        user_id integer NOT NULL,
+        product_id integer NOT NULL,
+        created_at timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    _allTablesEnsured = true;
+    console.log("[Database] All tables and columns verified.");
+  } catch (error) {
+    console.warn("[Database] Error ensuring tables:", error);
+    // Don't throw - let the app continue with what exists
+  }
+}
+
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
       _db = drizzle(process.env.DATABASE_URL);
       await ensureUsersTableExists(_db);
       await ensureProductEmbeddingsTableExists(_db);
+      await ensureAllTablesAndColumns(_db);
       await backfillLegacyProductColumns(_db);
       await backfillLegacyEmbeddingColumns(_db);
     } catch (error) {
@@ -314,6 +496,48 @@ export async function getUserByOpenId(openId: string) {
 
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
   return result.length > 0 ? result[0] : undefined;
+}
+
+export async function getUserByEmail(email: string) {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot get user: database not available");
+    return undefined;
+  }
+
+  const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function createUser(user: InsertUser): Promise<number | undefined> {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot create user: database not available");
+    return undefined;
+  }
+
+  try {
+    const result = await db.insert(users).values(user).returning({ id: users.id });
+    return result[0]?.id;
+  } catch (error) {
+    console.error("[Database] Failed to create user:", error);
+    throw error;
+  }
+}
+
+export async function updateUserAvatar(userId: number, avatarUrl: string): Promise<void> {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot update user: database not available");
+    return;
+  }
+
+  try {
+    await db.update(users).set({ avatarUrl }).where(eq(users.id, userId));
+  } catch (error) {
+    console.error("[Database] Failed to update user avatar:", error);
+    throw error;
+  }
 }
 
 // ==================== PRODUCT OPERATIONS ====================

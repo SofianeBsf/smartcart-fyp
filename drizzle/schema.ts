@@ -28,6 +28,9 @@ export const users = pgTable("users", {
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("login_method", { length: 64 }),
 
+  passwordHash: text("password_hash"),
+  avatarUrl: text("avatar_url"),
+
   role: userRoleEnum("role").default("user").notNull(),
 
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -249,3 +252,31 @@ export const evaluationMetrics = pgTable("evaluation_metrics", {
 
 export type EvaluationMetric = typeof evaluationMetrics.$inferSelect;
 export type InsertEvaluationMetric = typeof evaluationMetrics.$inferInsert;
+
+/**
+ * Shopping cart items for authenticated users.
+ */
+export const cartItems = pgTable("cart_items", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  productId: integer("product_id").notNull(),
+  quantity: integer("quantity").default(1).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type CartItem = typeof cartItems.$inferSelect;
+export type InsertCartItem = typeof cartItems.$inferInsert;
+
+/**
+ * Wishlist items for authenticated users.
+ */
+export const wishlistItems = pgTable("wishlist_items", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  productId: integer("product_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type WishlistItem = typeof wishlistItems.$inferSelect;
+export type InsertWishlistItem = typeof wishlistItems.$inferInsert;

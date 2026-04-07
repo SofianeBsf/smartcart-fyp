@@ -10,6 +10,18 @@ import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
 import * as db from "../db";
+import { nanoid } from "nanoid";
+
+// bcryptjs for password hashing - loaded dynamically
+let bcrypt: any = null;
+const loadBcrypt = import("bcryptjs")
+  .then((mod) => {
+    bcrypt = mod.default || mod;
+    console.log("[Auth] bcryptjs loaded successfully");
+  })
+  .catch(() => {
+    console.warn("[Auth] bcryptjs not installed. Install with: npm install bcryptjs");
+  });
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -31,6 +43,9 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  // Wait for bcryptjs to load before starting
+  await loadBcrypt;
+
   const app = express();
   const server = createServer(app);
   // Configure body parser with larger size limit for file uploads
@@ -115,6 +130,198 @@ async function startServer() {
     } catch (e) {
       console.error("[DevLogin] GET failed", e);
       return res.status(500).send("dev-login failed");
+    }
+  });
+
+  // Register endpoint
+  app.post("/api/auth/register", async (req, res) => {
+    try {
+      if (!bcrypt) {
+        return res.status(500).json({
+          error: "bcryptjs not available. Install with: npm install bcryptjs",
+        });
+      }
+
+      const { name, email, password } = req.body;
+
+      // Validation
+      if (!name || typeof name !== "string" || name.trim().length === 0) {
+        return res.status(400).json({ error: "Name is required" });
+      }
+
+      if (!email || typeof email !== "string") {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email.trim())) {
+        return res.status(400).json({ error: "Invalid email format" });
+      }
+
+      if (!password || typeof password !== "string" || password.length < 8) {
+        return res.status(400).json({
+          error: "Password must be at least 8 characters long",
+        });
+      }
+
+      const normalizedEmail = email.trim().toLowerCase();
+
+      // Check if user already exists
+      const existingUser = await db.getUserByEmail(normalizedEmail);
+      if (existingUser) {
+        return res.status(409).json({ error: "Email already registered" });
+      }
+
+      // Hash password
+      const passwordHash = await bcrypt.hash(password, 10);
+
+      // Create user
+      const openId = `user-${nanoid()}`;
+      const userId = await db.createUser({
+        openId,
+        name: name.trim(),
+        email: normalizedEmail,
+        passwordHash,
+        loginMethod: "password",
+        role: "user",
+        lastSignedIn: new Date(),
+      });
+
+      if (!userId) {
+        return res.status(503).json({
+          error: "Registration requires a running database",
+        });
+      }
+
+      return res.status(201).json({
+        success: true,
+        message: "Registration successful",
+      });
+    } catch (e) {
+      console.error("[Register] failed", e);
+      return res.status(500).json({ error: "Registration failed" });
+    }
+  });
+
+  // Login endpoint
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      if (!bcrypt) {
+        return res.status(500).json({
+          error: "bcryptjs not available. Install with: npm install bcryptjs",
+        });
+      }
+
+      const { email, password } = req.body;
+
+      if (!email || !password) {
+        return res.status(400).json({ error: "Email and password required" });
+      }
+
+      const normalizedEmail = email.trim().toLowerCase();
+
+      // Find user by email
+      const user = await db.getUserByEmail(normalizedEmail);
+      if (!user || !user.passwordHash) {
+        return res.status(401).json({ error: "Invalid email or password" });
+      }
+
+      // Verify password
+      const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+      if (!isPasswordValid) {
+        return res.status(401).json({ error: "Invalid email or password" });
+      }
+
+      // Update last signed in
+      await db.upsertUser({
+        openId: user.openId,
+        lastSignedIn: new Date(),
+      });
+
+      // Create session token
+      const sessionToken = await sdk.createSessionToken(user.openId, {
+        name: user.name || "",
+        expiresInMs: ONE_YEAR_MS,
+      });
+
+      const cookieOptions = getSessionCookieOptions(req);
+      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+
+      return res.json({
+        success: true,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+        },
+      });
+    } catch (e) {
+      console.error("[Login] failed", e);
+      return res.status(500).json({ error: "Login failed" });
+    }
+  });
+
+  // Forgot password endpoint (simulation - no actual email sent)
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    try {
+      const { email } = req.body;
+
+      if (!email) {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      // Always return success for security (prevent email enumeration)
+      return res.json({
+        success: true,
+        message: "If an account exists, you will receive a reset link",
+      });
+    } catch (e) {
+      console.error("[ForgotPassword] failed", e);
+      return res.status(500).json({ error: "Forgot password request failed" });
+    }
+  });
+
+  // Upload avatar endpoint
+  app.post("/api/auth/upload-avatar", async (req, res) => {
+    try {
+      // Get authenticated user from cookie
+      const cookies = req.headers.cookie || "";
+      const cookieMap = new Map(
+        cookies.split("; ").map((c) => {
+          const [key, ...rest] = c.split("=");
+          return [key, rest.join("=")];
+        })
+      );
+
+      const sessionToken = cookieMap.get(COOKIE_NAME);
+      if (!sessionToken) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const session = await sdk.verifySession(sessionToken);
+      if (!session) {
+        return res.status(401).json({ error: "Invalid session" });
+      }
+
+      const user = await db.getUserByOpenId(session.openId);
+      if (!user) {
+        return res.status(401).json({ error: "User not found" });
+      }
+
+      // For now, return a mock response
+      // In production, you would handle file upload with multer and save to S3 or local storage
+      const avatarUrl = `/uploads/avatars/${nanoid()}.jpg`;
+
+      await db.updateUserAvatar(user.id, avatarUrl);
+
+      return res.json({
+        success: true,
+        avatarUrl,
+      });
+    } catch (e) {
+      console.error("[UploadAvatar] failed", e);
+      return res.status(500).json({ error: "Avatar upload failed" });
     }
   });
 

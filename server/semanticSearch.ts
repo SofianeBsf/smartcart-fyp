@@ -1,8 +1,8 @@
 import { invokeLLM } from "./_core/llm";
-import { 
-  getAllProductsWithOptionalEmbeddings, 
-  getActiveRankingWeights, 
-  logSearch, 
+import {
+  getAllProductsWithOptionalEmbeddings,
+  getActiveRankingWeights,
+  logSearch,
   saveSearchExplanations,
   createEmbedding,
   getProductById
@@ -16,33 +16,159 @@ import type { Product, RankingWeight } from "../drizzle/schema";
 const EMBEDDING_DIMENSION = 384;
 
 /**
- * Generate embedding for a text using a fast deterministic hash-based approach.
- * This creates consistent embeddings that match the product embeddings format.
- * For production, this would use actual Sentence-BERT or similar models.
+ * Common English stop words to exclude from TF-IDF calculations
  */
-export async function generateEmbedding(text: string): Promise<number[]> {
-  // Use fast deterministic embedding for query - matches the product embedding format
-  return generateDeterministicEmbedding(text);
+const STOP_WORDS = new Set([
+  "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has", "he",
+  "in", "is", "it", "its", "of", "on", "or", "that", "the", "to", "was", "will",
+  "with", "the", "this", "that", "these", "those", "i", "you", "he", "she", "it",
+  "we", "they", "what", "which", "who", "when", "where", "why", "how", "all",
+  "each", "every", "both", "few", "more", "most", "other", "some", "such", "no",
+  "nor", "not", "only", "own", "same", "so", "than", "too", "very", "just",
+  "can", "could", "may", "might", "should", "would", "have", "had", "do", "does",
+  "did", "get", "gets", "got", "make", "makes", "made", "go", "goes", "went",
+  "about", "above", "after", "again", "against", "before", "below", "between",
+  "during", "into", "through", "during", "before", "after", "up", "down", "out",
+  "off", "over", "under", "here", "there", "then", "now", "am"
+]);
+
+/**
+ * Synonym mapping for e-commerce terms to improve search relevance
+ */
+const SYNONYMS: { [key: string]: string[] } = {
+  "quiet": ["silent", "noise-cancelling", "noiseless", "soundproof", "silent"],
+  "cheap": ["affordable", "budget", "low-cost", "value", "inexpensive", "economical"],
+  "fast": ["quick", "rapid", "speedy", "high-speed", "swift"],
+  "big": ["large", "spacious", "oversized", "huge", "jumbo", "size"],
+  "small": ["compact", "mini", "portable", "tiny", "lightweight"],
+  "good": ["quality", "premium", "excellent", "great", "nice", "best"],
+  "wireless": ["bluetooth", "cordless", "wifi", "wireless"],
+  "lightweight": ["light", "ultralight", "portable", "weight", "slim"],
+  "durable": ["sturdy", "strong", "tough", "lasting", "solid"],
+  "waterproof": ["water-resistant", "water-proof", "waterproof", "rain", "wet"],
+  "noisy": ["loud", "noise", "sound", "acoustic"],
+  "expensive": ["costly", "pricey", "dear", "high-end"],
+  "bright": ["luminous", "light", "shiny", "reflective"],
+  "dark": ["dim", "low-light", "night"],
+};
+
+/**
+ * Global TF-IDF state for fallback embedding generation
+ */
+let idfDict: Map<string, number> = new Map();
+let vocabularySize = 0;
+let corpusBuilt = false;
+
+/**
+ * Tokenize text for TF-IDF calculations
+ */
+function tokenize(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, " ") // Replace punctuation with spaces
+    .split(/\s+/)
+    .filter(token => token.length > 1 && !STOP_WORDS.has(token));
 }
 
 /**
- * Generate a deterministic embedding based on text content.
- * Uses a hash-based approach for consistent, fast results.
+ * Expand query with synonyms
+ */
+function expandQueryWithSynonyms(tokens: string[]): string[] {
+  const expanded = new Set<string>();
+
+  for (const token of tokens) {
+    expanded.add(token);
+    if (SYNONYMS[token]) {
+      SYNONYMS[token].forEach(syn => expanded.add(syn));
+    }
+  }
+
+  return Array.from(expanded);
+}
+
+/**
+ * Build IDF dictionary from corpus of product texts
+ */
+export function buildCorpusIDF(productTexts: string[]): void {
+  const docFrequency = new Map<string, number>();
+  const numDocs = productTexts.length;
+
+  // Count document frequency for each term
+  for (const text of productTexts) {
+    const uniqueTokens = new Set(tokenize(text));
+    for (const token of uniqueTokens) {
+      docFrequency.set(token, (docFrequency.get(token) || 0) + 1);
+    }
+  }
+
+  // Calculate IDF for each term: log(N / df)
+  idfDict = new Map();
+  for (const [term, df] of docFrequency) {
+    idfDict.set(term, Math.log(numDocs / Math.max(df, 1)));
+  }
+
+  vocabularySize = idfDict.size;
+  corpusBuilt = true;
+}
+
+/**
+ * Generate TF-IDF vector for a text
+ */
+function generateTFIDFVector(text: string, targetDim: number = EMBEDDING_DIMENSION): number[] {
+  const tokens = tokenize(text);
+  const expandedTokens = expandQueryWithSynonyms(tokens);
+
+  // Calculate term frequency
+  const tf = new Map<string, number>();
+  for (const token of expandedTokens) {
+    tf.set(token, (tf.get(token) || 0) + 1);
+  }
+
+  // Create vector representation using selected features
+  // We'll use a deterministic feature extraction approach based on term hashing
+  const vector: number[] = new Array(targetDim).fill(0);
+
+  for (const [term, frequency] of tf) {
+    // Hash term to dimension
+    let hash = 0;
+    for (let i = 0; i < term.length; i++) {
+      hash = ((hash << 5) - hash) + term.charCodeAt(i);
+      hash |= 0; // Convert to 32bit integer
+    }
+    const dimension = Math.abs(hash) % targetDim;
+
+    // Get IDF value, default to 1 if not in corpus
+    const idf = idfDict.get(term) || 1;
+    const tfidf = frequency * idf;
+
+    // Add weighted value to vector
+    vector[dimension] += tfidf * 0.1; // Scale to prevent overflow
+  }
+
+  // Ensure we have some signal even for unknown terms
+  if (vector.every(v => v === 0)) {
+    for (let i = 0; i < Math.min(5, targetDim); i++) {
+      vector[i] = 0.1;
+    }
+  }
+
+  return normalizeVector(vector);
+}
+
+/**
+ * Generate embedding for a text using TF-IDF with synonym expansion.
+ * This creates consistent embeddings that match the product embeddings format.
+ */
+export async function generateEmbedding(text: string): Promise<number[]> {
+  return generateTFIDFVector(text, EMBEDDING_DIMENSION);
+}
+
+/**
+ * Generate a deterministic embedding based on TF-IDF approach.
+ * Used as fallback when LLM embedding fails.
  */
 function generateDeterministicEmbedding(text: string): number[] {
-  const embedding: number[] = [];
-  const normalizedText = text.toLowerCase();
-  
-  // Create a deterministic hash-based embedding
-  for (let i = 0; i < EMBEDDING_DIMENSION; i++) {
-    let value = 0;
-    for (let j = 0; j < normalizedText.length; j++) {
-      value += normalizedText.charCodeAt(j) * Math.sin((i + 1) * (j + 1) * 0.01);
-    }
-    embedding.push(Math.tanh(value * 0.001)); // Normalize to [-1, 1]
-  }
-  
-  return normalizeVector(embedding);
+  return generateTFIDFVector(text, EMBEDDING_DIMENSION);
 }
 
 /**
@@ -254,11 +380,19 @@ export async function semanticSearch(
     sessionId = "anonymous"
   } = options;
 
-  // Generate query embedding
-  const queryEmbedding = await generateEmbedding(query);
-  
   // Get all products, with embeddings when available
   const productsWithEmbeddings = await getAllProductsWithOptionalEmbeddings(5000, 0);
+
+  // Build corpus IDF on first search if not already built
+  if (!corpusBuilt && productsWithEmbeddings.length > 0) {
+    const productTexts = productsWithEmbeddings.map(({ product }) =>
+      `${product.title} ${product.description || ""} ${product.category || ""} ${product.subcategory || ""}`
+    );
+    buildCorpusIDF(productTexts);
+  }
+
+  // Generate query embedding
+  const queryEmbedding = await generateEmbedding(query);
   
   // Get active ranking weights
   const weights = await getActiveRankingWeights();

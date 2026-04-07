@@ -1,11 +1,19 @@
-import { useEffect } from "react";
-import { useParams, Link } from "wouter";
+import { useEffect, useState } from "react";
+import { useParams, Link, useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
+import { useCart } from "@/hooks/useCart";
+import { useWishlist } from "@/hooks/useWishlist";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   ArrowLeft,
   Star,
@@ -17,13 +25,21 @@ import {
   AlertTriangle,
   XCircle,
   Sparkles,
+  Copy,
+  Twitter,
+  Facebook,
+  MessageCircle,
 } from "lucide-react";
 import Header from "@/components/Header";
 import ProductCard from "@/components/ProductCard";
 
 export default function ProductDetail() {
   const { id } = useParams<{ id: string }>();
+  const [, setLocation] = useLocation();
   const productId = parseInt(id || "0", 10);
+  const [addedToCart, setAddedToCart] = useState(false);
+  const { addItem: addToCart } = useCart();
+  const { isInWishlist, toggleItem: toggleWishlist } = useWishlist();
 
   // Fetch product details
   const { data: product, isLoading: productLoading } = trpc.products.getById.useQuery(
@@ -279,11 +295,21 @@ export default function ProductDetail() {
 
             {/* Actions */}
             <div className="flex gap-3 pt-4">
-              <Button 
-                size="lg" 
+              <Button
+                size="lg"
                 className="flex-1"
                 disabled={product.availability === "out_of_stock"}
                 onClick={() => {
+                  const productImage = productCompat.imageUrl || productCompat.image_url || productCompat.image || "";
+                  addToCart({
+                    productId: product.id,
+                    title: product.title,
+                    price: parseFloat(product.price || "0"),
+                    imageUrl: productImage,
+                    quantity: 1,
+                  });
+                  setAddedToCart(true);
+                  setTimeout(() => setAddedToCart(false), 2000);
                   recordInteraction.mutate({
                     productId: product.id,
                     interactionType: "add_to_cart",
@@ -291,14 +317,82 @@ export default function ProductDetail() {
                 }}
               >
                 <ShoppingCart className="w-5 h-5 mr-2" />
-                Add to Cart
+                {addedToCart ? "Added!" : "Add to Cart"}
               </Button>
-              <Button size="lg" variant="outline">
-                <Heart className="w-5 h-5" />
+
+              <Button
+                size="lg"
+                variant={isInWishlist(product.id) ? "default" : "outline"}
+                onClick={() => {
+                  const productImage = productCompat.imageUrl || productCompat.image_url || productCompat.image || "";
+                  toggleWishlist({
+                    productId: product.id,
+                    title: product.title,
+                    price: parseFloat(product.price || "0"),
+                    imageUrl: productImage,
+                  });
+                }}
+              >
+                <Heart className={`w-5 h-5 ${isInWishlist(product.id) ? "fill-current" : ""}`} />
               </Button>
-              <Button size="lg" variant="outline">
-                <Share2 className="w-5 h-5" />
-              </Button>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="lg" variant="outline">
+                    <Share2 className="w-5 h-5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    onClick={() => {
+                      const url = window.location.href;
+                      navigator.clipboard.writeText(url);
+                      alert("Link copied to clipboard!");
+                    }}
+                  >
+                    <Copy className="w-4 h-4 mr-2" />
+                    Copy Link
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => {
+                      const url = window.location.href;
+                      const text = `Check out this product: ${product.title}`;
+                      window.open(
+                        `https://twitter.com/intent/tweet?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`,
+                        "_blank"
+                      );
+                    }}
+                  >
+                    <Twitter className="w-4 h-4 mr-2" />
+                    Share on Twitter
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => {
+                      const url = window.location.href;
+                      window.open(
+                        `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`,
+                        "_blank"
+                      );
+                    }}
+                  >
+                    <Facebook className="w-4 h-4 mr-2" />
+                    Share on Facebook
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => {
+                      const url = window.location.href;
+                      const text = `Check out this product: ${product.title}`;
+                      window.open(
+                        `https://wa.me/?text=${encodeURIComponent(text + " " + url)}`,
+                        "_blank"
+                      );
+                    }}
+                  >
+                    <MessageCircle className="w-4 h-4 mr-2" />
+                    Share on WhatsApp
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
 
             {/* Category Tags */}
