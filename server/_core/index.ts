@@ -191,13 +191,14 @@ async function startServer() {
 
       // Send verification email
       const emailResult = await sendVerificationEmail(normalizedEmail, name.trim(), verificationToken);
+
       if (!emailResult.success) {
         console.warn("[Register] Verification email failed:", emailResult.error);
       }
 
       return res.status(201).json({
         success: true,
-        message: "Account created. Please check your email to verify your account.",
+        message: "Account created! Please check your email to verify your account.",
         userId,
       });
     } catch (e) {

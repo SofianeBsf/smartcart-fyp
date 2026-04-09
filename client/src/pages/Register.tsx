@@ -97,7 +97,7 @@ export default function Register() {
         throw new Error(data.error || "Registration failed");
       }
 
-      toast.success("Account created! Please check your email to verify your account.", {
+      toast.success(data.message || "Account created successfully!", {
         duration: 6000,
       });
       setLocation("/login");

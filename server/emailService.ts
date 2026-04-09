@@ -1,16 +1,25 @@
-import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
 
-const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const SMTP_USER = process.env.SMTP_USER;
+const SMTP_PASS = process.env.SMTP_PASS;
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
-const FROM_EMAIL = 'SmartCart <onboarding@resend.dev>';
 
-if (!RESEND_API_KEY) {
+if (!SMTP_USER || !SMTP_PASS) {
   console.warn(
-    'Warning: RESEND_API_KEY is not set. Email functionality will be disabled.'
+    'Warning: SMTP_USER or SMTP_PASS is not set. Email functionality will be disabled.'
   );
 }
 
-const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
+const transporter =
+  SMTP_USER && SMTP_PASS
+    ? nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+          user: SMTP_USER,
+          pass: SMTP_PASS,
+        },
+      })
+    : null;
 
 interface EmailResponse {
   success: boolean;
@@ -38,8 +47,8 @@ export async function sendVerificationEmail(
   name: string,
   token: string
 ): Promise<EmailResponse> {
-  if (!resend) {
-    console.warn('Resend API key not configured. Email not sent.');
+  if (!transporter) {
+    console.warn('SMTP not configured. Email not sent.');
     return { success: false, error: 'Email service not configured' };
   }
 
@@ -150,19 +159,15 @@ export async function sendVerificationEmail(
   `;
 
   try {
-    const response = await resend.emails.send({
-      from: FROM_EMAIL,
+    const info = await transporter.sendMail({
+      from: `SmartCart <${SMTP_USER}>`,
       to: email,
       subject: 'Verify your SmartCart email address',
       html: htmlContent,
     });
 
-    if (response.error) {
-      console.error('Error sending verification email:', response.error);
-      return { success: false, error: response.error.message };
-    }
-
-    return { success: true, messageId: response.data?.id };
+    console.log('[Email] Verification email sent to', email, '- ID:', info.messageId);
+    return { success: true, messageId: info.messageId };
   } catch (error) {
     console.error('Error sending verification email:', error);
     return {
@@ -180,8 +185,8 @@ export async function sendPasswordResetEmail(
   name: string,
   token: string
 ): Promise<EmailResponse> {
-  if (!resend) {
-    console.warn('Resend API key not configured. Email not sent.');
+  if (!transporter) {
+    console.warn('SMTP not configured. Email not sent.');
     return { success: false, error: 'Email service not configured' };
   }
 
@@ -301,19 +306,15 @@ export async function sendPasswordResetEmail(
   `;
 
   try {
-    const response = await resend.emails.send({
-      from: FROM_EMAIL,
+    const info = await transporter.sendMail({
+      from: `SmartCart <${SMTP_USER}>`,
       to: email,
       subject: 'Reset your SmartCart password',
       html: htmlContent,
     });
 
-    if (response.error) {
-      console.error('Error sending password reset email:', response.error);
-      return { success: false, error: response.error.message };
-    }
-
-    return { success: true, messageId: response.data?.id };
+    console.log('[Email] Password reset email sent to', email, '- ID:', info.messageId);
+    return { success: true, messageId: info.messageId };
   } catch (error) {
     console.error('Error sending password reset email:', error);
     return {
@@ -331,8 +332,8 @@ export async function sendPurchaseConfirmationEmail(
   name: string,
   orderDetails: OrderDetails
 ): Promise<EmailResponse> {
-  if (!resend) {
-    console.warn('Resend API key not configured. Email not sent.');
+  if (!transporter) {
+    console.warn('SMTP not configured. Email not sent.');
     return { success: false, error: 'Email service not configured' };
   }
 
@@ -347,10 +348,10 @@ export async function sendPurchaseConfirmationEmail(
         ${item.quantity}
       </td>
       <td style="padding: 12px 15px; border-bottom: 1px solid #eee; text-align: right;">
-        $${item.price.toFixed(2)}
+        &pound;${item.price.toFixed(2)}
       </td>
       <td style="padding: 12px 15px; border-bottom: 1px solid #eee; text-align: right;">
-        $${(item.quantity * item.price).toFixed(2)}
+        &pound;${(item.quantity * item.price).toFixed(2)}
       </td>
     </tr>
   `
@@ -502,7 +503,7 @@ export async function sendPurchaseConfirmationEmail(
               <tfoot>
                 <tr class="total-row">
                   <td colspan="3">Total:</td>
-                  <td>$${orderDetails.total.toFixed(2)}</td>
+                  <td>&pound;${orderDetails.total.toFixed(2)}</td>
                 </tr>
               </tfoot>
             </table>
@@ -524,19 +525,15 @@ export async function sendPurchaseConfirmationEmail(
   `;
 
   try {
-    const response = await resend.emails.send({
-      from: FROM_EMAIL,
+    const info = await transporter.sendMail({
+      from: `SmartCart <${SMTP_USER}>`,
       to: email,
       subject: `Order Confirmation - SmartCart Order #${orderDetails.orderId}`,
       html: htmlContent,
     });
 
-    if (response.error) {
-      console.error('Error sending purchase confirmation email:', response.error);
-      return { success: false, error: response.error.message };
-    }
-
-    return { success: true, messageId: response.data?.id };
+    console.log('[Email] Purchase confirmation sent to', email, '- ID:', info.messageId);
+    return { success: true, messageId: info.messageId };
   } catch (error) {
     console.error('Error sending purchase confirmation email:', error);
     return {
