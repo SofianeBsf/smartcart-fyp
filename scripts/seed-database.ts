@@ -55,12 +55,24 @@ async function seedDatabase() {
       login_method varchar(64),
       password_hash text,
       avatar_url text,
+      email_verified boolean DEFAULT false,
+      verification_token text,
+      verification_token_expires timestamp,
+      password_reset_token text,
+      password_reset_expires timestamp,
       role role NOT NULL DEFAULT 'user',
       created_at timestamp NOT NULL DEFAULT now(),
       updated_at timestamp NOT NULL DEFAULT now(),
       last_signed_in timestamp NOT NULL DEFAULT now()
     );
   `);
+
+  // Add new columns to existing users table if they don't exist
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified boolean DEFAULT false;`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token text;`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token_expires timestamp;`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_token text;`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_expires timestamp;`);
 
   // Products table
   await db.execute(sql`
@@ -244,22 +256,24 @@ async function seedDatabase() {
   const existingAdmin = await db.select().from(users).where(eq(users.openId, adminOpenId)).limit(1);
   if (existingAdmin.length === 0) {
     await db.execute(sql`
-      INSERT INTO users (open_id, name, email, login_method, role, password_hash, created_at, updated_at, last_signed_in)
-      VALUES (${adminOpenId}, 'Admin', ${adminEmail}, 'password', 'admin', ${passwordHash}, now(), now(), now())
+      INSERT INTO users (open_id, name, email, login_method, role, password_hash, email_verified, created_at, updated_at, last_signed_in)
+      VALUES (${adminOpenId}, 'Admin', ${adminEmail}, 'password', 'admin', ${passwordHash}, true, now(), now(), now())
       ON CONFLICT (open_id) DO UPDATE SET
         email = ${adminEmail},
         role = 'admin',
         password_hash = ${passwordHash},
+        email_verified = true,
         updated_at = now()
     `);
     console.log(`  Admin created: ${adminEmail} / ${adminPassword}\n`);
   } else {
-    // Update existing admin's password
+    // Update existing admin's password and ensure verified
     await db.execute(sql`
       UPDATE users SET
         email = ${adminEmail},
         role = 'admin',
         password_hash = ${passwordHash},
+        email_verified = true,
         updated_at = now()
       WHERE open_id = ${adminOpenId}
     `);

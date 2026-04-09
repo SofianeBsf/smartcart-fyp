@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Sparkles, AlertCircle, CheckCircle, ArrowLeft } from "lucide-react";
+import { toast } from "sonner";
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState("");
@@ -50,8 +51,11 @@ export default function ForgotPassword() {
 
       setSuccess(true);
       setEmail("");
+      toast.success("If an account exists, a reset link has been sent to your email.");
     } catch (err: any) {
-      setError(err.message || "Failed to process request. Please try again.");
+      const msg = err.message || "Failed to process request. Please try again.";
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }

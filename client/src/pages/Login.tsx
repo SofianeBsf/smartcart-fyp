@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Sparkles, AlertCircle } from "lucide-react";
+import { toast } from "sonner";
 
 export default function Login() {
   const [, setLocation] = useLocation();
@@ -42,6 +43,21 @@ export default function Login() {
     return true;
   };
 
+  const handleResendVerification = async () => {
+    try {
+      const response = await fetch("/api/auth/resend-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      if (response.ok) {
+        toast.success("Verification email resent. Please check your inbox.");
+      }
+    } catch {
+      toast.error("Failed to resend verification email.");
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -57,9 +73,21 @@ export default function Login() {
         body: JSON.stringify({ email, password }),
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.message || "Invalid credentials");
+        if (data.needsVerification) {
+          setError("Please verify your email before logging in.");
+          toast.error("Email not verified. Check your inbox for the verification link.", {
+            duration: 6000,
+            action: {
+              label: "Resend",
+              onClick: handleResendVerification,
+            },
+          });
+          return;
+        }
+        throw new Error(data.error || "Invalid credentials");
       }
 
       if (rememberMe) {
@@ -68,9 +96,12 @@ export default function Login() {
         localStorage.removeItem("rememberEmail");
       }
 
+      toast.success(`Welcome back, ${data.user?.name || ""}!`);
       setLocation("/");
     } catch (err: any) {
-      setError(err.message || "Login failed. Please try again.");
+      const msg = err.message || "Login failed. Please try again.";
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -78,7 +109,6 @@ export default function Login() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col lg:flex-row">
-      {/* Left side - Branding */}
       <div className="hidden lg:flex lg:w-1/2 gradient-hero flex-col items-center justify-center p-12">
         <div className="text-center space-y-6">
           <div className="w-20 h-20 rounded-2xl gradient-primary flex items-center justify-center mx-auto">
@@ -93,7 +123,6 @@ export default function Login() {
         </div>
       </div>
 
-      {/* Right side - Login Form */}
       <div className="flex-1 flex items-center justify-center p-4 md:p-8">
         <Card className="w-full max-w-md border-0 shadow-lg md:shadow-none md:border">
           <CardHeader className="space-y-2">
@@ -118,9 +147,7 @@ export default function Login() {
               )}
 
               <div className="space-y-2">
-                <label htmlFor="email" className="text-sm font-medium">
-                  Email
-                </label>
+                <label htmlFor="email" className="text-sm font-medium">Email</label>
                 <Input
                   id="email"
                   type="email"
@@ -132,9 +159,7 @@ export default function Login() {
               </div>
 
               <div className="space-y-2">
-                <label htmlFor="password" className="text-sm font-medium">
-                  Password
-                </label>
+                <label htmlFor="password" className="text-sm font-medium">Password</label>
                 <Input
                   id="password"
                   type="password"
@@ -152,17 +177,10 @@ export default function Login() {
                   onCheckedChange={(checked) => setRememberMe(checked as boolean)}
                   disabled={loading}
                 />
-                <label htmlFor="remember" className="text-sm cursor-pointer">
-                  Remember me
-                </label>
+                <label htmlFor="remember" className="text-sm cursor-pointer">Remember me</label>
               </div>
 
-              <Button
-                type="submit"
-                className="w-full"
-                disabled={loading}
-                size="lg"
-              >
+              <Button type="submit" className="w-full" disabled={loading} size="lg">
                 {loading ? "Signing in..." : "Sign In"}
               </Button>
             </form>
@@ -179,19 +197,12 @@ export default function Login() {
                 </div>
               </div>
 
-              <Button
-                variant="outline"
-                className="w-full"
-                asChild
-              >
+              <Button variant="outline" className="w-full" asChild>
                 <Link href="/register">Create Account</Link>
               </Button>
 
               <div className="text-center">
-                <Link
-                  href="/forgot-password"
-                  className="text-sm text-primary hover:underline"
-                >
+                <Link href="/forgot-password" className="text-sm text-primary hover:underline">
                   Forgot password?
                 </Link>
               </div>

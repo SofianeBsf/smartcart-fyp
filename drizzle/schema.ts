@@ -31,6 +31,12 @@ export const users = pgTable("users", {
   passwordHash: text("password_hash"),
   avatarUrl: text("avatar_url"),
 
+  emailVerified: boolean("email_verified").default(false),
+  verificationToken: text("verification_token"),
+  verificationTokenExpires: timestamp("verification_token_expires"),
+  passwordResetToken: text("password_reset_token"),
+  passwordResetExpires: timestamp("password_reset_expires"),
+
   role: userRoleEnum("role").default("user").notNull(),
 
   createdAt: timestamp("created_at").defaultNow().notNull(),

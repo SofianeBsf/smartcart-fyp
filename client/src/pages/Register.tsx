@@ -5,8 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Sparkles, AlertCircle, Upload } from "lucide-react";
+import { Sparkles, AlertCircle } from "lucide-react";
+import { toast } from "sonner";
 
 export default function Register() {
   const [, setLocation] = useLocation();
@@ -16,23 +16,9 @@ export default function Register() {
     password: "",
     confirmPassword: "",
   });
-  const [avatar, setAvatar] = useState<File | null>(null);
-  const [avatarPreview, setAvatarPreview] = useState<string>("");
   const [agreeToTerms, setAgreeToTerms] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-
-  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setAvatar(file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setAvatarPreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
 
   const validateForm = () => {
     setError("");
@@ -95,27 +81,30 @@ export default function Register() {
     setError("");
 
     try {
-      const form = new FormData();
-      form.append("name", formData.name);
-      form.append("email", formData.email);
-      form.append("password", formData.password);
-      if (avatar) {
-        form.append("avatar", avatar);
-      }
-
       const response = await fetch("/api/auth/register", {
         method: "POST",
-        body: form,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: formData.name,
+          email: formData.email,
+          password: formData.password,
+        }),
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.message || "Registration failed");
+        throw new Error(data.error || "Registration failed");
       }
 
+      toast.success("Account created! Please check your email to verify your account.", {
+        duration: 6000,
+      });
       setLocation("/login");
     } catch (err: any) {
-      setError(err.message || "Registration failed. Please try again.");
+      const msg = err.message || "Registration failed. Please try again.";
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -161,40 +150,6 @@ export default function Register() {
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
               )}
-
-              {/* Avatar Upload */}
-              <div className="flex flex-col items-center gap-4">
-                <Avatar className="w-20 h-20">
-                  <AvatarImage src={avatarPreview} alt="Profile" />
-                  <AvatarFallback className="bg-primary/10">
-                    <Upload className="w-8 h-8 text-muted-foreground" />
-                  </AvatarFallback>
-                </Avatar>
-                <div className="relative w-full">
-                  <Input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleAvatarChange}
-                    disabled={loading}
-                    className="hidden"
-                    id="avatar-upload"
-                  />
-                  <label htmlFor="avatar-upload">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full cursor-pointer"
-                      asChild
-                      disabled={loading}
-                    >
-                      <span>
-                        <Upload className="w-4 h-4 mr-2" />
-                        Choose Photo (Optional)
-                      </span>
-                    </Button>
-                  </label>
-                </div>
-              </div>
 
               <div className="space-y-2">
                 <label htmlFor="name" className="text-sm font-medium">

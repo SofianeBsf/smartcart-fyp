@@ -1,4 +1,5 @@
-import { drizzle } from "drizzle-orm/node-postgres";
+import { neon } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-http";
 import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import {
   InsertUser, users,
@@ -46,6 +47,11 @@ async function ensureUsersTableExists(db: ReturnType<typeof drizzle>) {
       login_method varchar(64),
       password_hash text,
       avatar_url text,
+      email_verified boolean DEFAULT false,
+      verification_token text,
+      verification_token_expires timestamp,
+      password_reset_token text,
+      password_reset_expires timestamp,
       role role NOT NULL DEFAULT 'user',
       created_at timestamp NOT NULL DEFAULT now(),
       updated_at timestamp NOT NULL DEFAULT now(),
@@ -53,14 +59,14 @@ async function ensureUsersTableExists(db: ReturnType<typeof drizzle>) {
     );
   `);
 
-  // Add new columns if they don't exist
-  await db.execute(sql`
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash text;
-  `);
-
-  await db.execute(sql`
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url text;
-  `);
+  // Add columns if they don't exist (for existing databases)
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash text;`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url text;`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified boolean DEFAULT false;`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token text;`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token_expires timestamp;`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_token text;`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_expires timestamp;`);
 
   _usersTableEnsured = true;
 }
@@ -411,7 +417,14 @@ async function ensureAllTablesAndColumns(db: ReturnType<typeof drizzle>) {
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      // Use Neon HTTP driver — bypasses TCP/SSL issues entirely
+      const neonSql = neon(process.env.DATABASE_URL);
+      _db = drizzle(neonSql);
+
+      // Test the connection
+      await _db.execute(sql`SELECT 1`);
+      console.log("[Database] Connected via Neon HTTP driver.");
+
       await ensureUsersTableExists(_db);
       await ensureProductEmbeddingsTableExists(_db);
       await ensureAllTablesAndColumns(_db);
@@ -538,6 +551,60 @@ export async function updateUserAvatar(userId: number, avatarUrl: string): Promi
     console.error("[Database] Failed to update user avatar:", error);
     throw error;
   }
+}
+
+// ==================== EMAIL VERIFICATION & PASSWORD RESET ====================
+
+export async function setVerificationToken(userId: number, token: string, expires: Date): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users).set({
+    verificationToken: token,
+    verificationTokenExpires: expires,
+  }).where(eq(users.id, userId));
+}
+
+export async function getUserByVerificationToken(token: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(users).where(eq(users.verificationToken, token)).limit(1);
+  return result[0] || null;
+}
+
+export async function verifyUserEmail(userId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users).set({
+    emailVerified: true,
+    verificationToken: null,
+    verificationTokenExpires: null,
+  }).where(eq(users.id, userId));
+}
+
+export async function setPasswordResetToken(userId: number, token: string, expires: Date): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users).set({
+    passwordResetToken: token,
+    passwordResetExpires: expires,
+  }).where(eq(users.id, userId));
+}
+
+export async function getUserByPasswordResetToken(token: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(users).where(eq(users.passwordResetToken, token)).limit(1);
+  return result[0] || null;
+}
+
+export async function resetUserPassword(userId: number, passwordHash: string): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users).set({
+    passwordHash,
+    passwordResetToken: null,
+    passwordResetExpires: null,
+  }).where(eq(users.id, userId));
 }
 
 // ==================== PRODUCT OPERATIONS ====================

@@ -11,6 +11,8 @@ import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
 import * as db from "../db";
 import { nanoid } from "nanoid";
+import { sendVerificationEmail, sendPasswordResetEmail, sendPurchaseConfirmationEmail } from "../emailService";
+import { randomBytes } from "crypto";
 
 // bcryptjs for password hashing - loaded dynamically
 let bcrypt: any = null;
@@ -133,49 +135,42 @@ async function startServer() {
     }
   });
 
-  // Register endpoint
+  // ==================== AUTH ENDPOINTS ====================
+
+  // Register endpoint — creates user + sends verification email
   app.post("/api/auth/register", async (req, res) => {
     try {
       if (!bcrypt) {
-        return res.status(500).json({
-          error: "bcryptjs not available. Install with: npm install bcryptjs",
-        });
+        return res.status(500).json({ error: "Server auth not ready. Try again later." });
       }
 
       const { name, email, password } = req.body;
 
-      // Validation
       if (!name || typeof name !== "string" || name.trim().length === 0) {
         return res.status(400).json({ error: "Name is required" });
       }
-
       if (!email || typeof email !== "string") {
         return res.status(400).json({ error: "Email is required" });
       }
-
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(email.trim())) {
         return res.status(400).json({ error: "Invalid email format" });
       }
-
       if (!password || typeof password !== "string" || password.length < 8) {
-        return res.status(400).json({
-          error: "Password must be at least 8 characters long",
-        });
+        return res.status(400).json({ error: "Password must be at least 8 characters" });
       }
 
       const normalizedEmail = email.trim().toLowerCase();
 
-      // Check if user already exists
       const existingUser = await db.getUserByEmail(normalizedEmail);
       if (existingUser) {
         return res.status(409).json({ error: "Email already registered" });
       }
 
-      // Hash password
       const passwordHash = await bcrypt.hash(password, 10);
+      const verificationToken = randomBytes(32).toString("hex");
+      const verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
-      // Create user
       const openId = `user-${nanoid()}`;
       const userId = await db.createUser({
         openId,
@@ -188,14 +183,22 @@ async function startServer() {
       });
 
       if (!userId) {
-        return res.status(503).json({
-          error: "Registration requires a running database",
-        });
+        return res.status(503).json({ error: "Registration requires a running database" });
+      }
+
+      // Save verification token
+      await db.setVerificationToken(userId, verificationToken, verificationTokenExpires);
+
+      // Send verification email
+      const emailResult = await sendVerificationEmail(normalizedEmail, name.trim(), verificationToken);
+      if (!emailResult.success) {
+        console.warn("[Register] Verification email failed:", emailResult.error);
       }
 
       return res.status(201).json({
         success: true,
-        message: "Registration successful",
+        message: "Account created. Please check your email to verify your account.",
+        userId,
       });
     } catch (e) {
       console.error("[Register] failed", e);
@@ -203,42 +206,91 @@ async function startServer() {
     }
   });
 
-  // Login endpoint
+  // Verify email endpoint
+  app.get("/api/auth/verify-email", async (req, res) => {
+    try {
+      const token = req.query.token as string;
+      if (!token) {
+        return res.status(400).json({ error: "Verification token is required" });
+      }
+
+      const user = await db.getUserByVerificationToken(token);
+      if (!user) {
+        return res.status(400).json({ error: "Invalid or expired verification link" });
+      }
+
+      if (user.verificationTokenExpires && new Date(user.verificationTokenExpires) < new Date()) {
+        return res.status(400).json({ error: "Verification link has expired. Please request a new one." });
+      }
+
+      await db.verifyUserEmail(user.id);
+
+      return res.json({ success: true, message: "Email verified successfully" });
+    } catch (e) {
+      console.error("[VerifyEmail] failed", e);
+      return res.status(500).json({ error: "Email verification failed" });
+    }
+  });
+
+  // Resend verification email
+  app.post("/api/auth/resend-verification", async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email) {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      const user = await db.getUserByEmail(email.trim().toLowerCase());
+      if (!user || user.emailVerified) {
+        // Don't reveal whether user exists
+        return res.json({ success: true, message: "If an unverified account exists, a new email has been sent." });
+      }
+
+      const verificationToken = randomBytes(32).toString("hex");
+      const verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      await db.setVerificationToken(user.id, verificationToken, verificationTokenExpires);
+      await sendVerificationEmail(user.email!, user.name || "User", verificationToken);
+
+      return res.json({ success: true, message: "Verification email resent." });
+    } catch (e) {
+      console.error("[ResendVerification] failed", e);
+      return res.status(500).json({ error: "Failed to resend verification email" });
+    }
+  });
+
+  // Login endpoint — requires verified email
   app.post("/api/auth/login", async (req, res) => {
     try {
       if (!bcrypt) {
-        return res.status(500).json({
-          error: "bcryptjs not available. Install with: npm install bcryptjs",
-        });
+        return res.status(500).json({ error: "Server auth not ready. Try again later." });
       }
 
       const { email, password } = req.body;
-
       if (!email || !password) {
         return res.status(400).json({ error: "Email and password required" });
       }
 
       const normalizedEmail = email.trim().toLowerCase();
-
-      // Find user by email
       const user = await db.getUserByEmail(normalizedEmail);
       if (!user || !user.passwordHash) {
         return res.status(401).json({ error: "Invalid email or password" });
       }
 
-      // Verify password
       const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
       if (!isPasswordValid) {
         return res.status(401).json({ error: "Invalid email or password" });
       }
 
-      // Update last signed in
-      await db.upsertUser({
-        openId: user.openId,
-        lastSignedIn: new Date(),
-      });
+      // Check email verification
+      if (!user.emailVerified) {
+        return res.status(403).json({
+          error: "Please verify your email before logging in",
+          needsVerification: true,
+        });
+      }
 
-      // Create session token
+      await db.upsertUser({ openId: user.openId, lastSignedIn: new Date() });
+
       const sessionToken = await sdk.createSessionToken(user.openId, {
         name: user.name || "",
         expiresInMs: ONE_YEAR_MS,
@@ -249,12 +301,7 @@ async function startServer() {
 
       return res.json({
         success: true,
-        user: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-        },
+        user: { id: user.id, name: user.name, email: user.email, role: user.role },
       });
     } catch (e) {
       console.error("[Login] failed", e);
@@ -262,19 +309,28 @@ async function startServer() {
     }
   });
 
-  // Forgot password endpoint (simulation - no actual email sent)
+  // Forgot password — sends reset email
   app.post("/api/auth/forgot-password", async (req, res) => {
     try {
       const { email } = req.body;
-
       if (!email) {
         return res.status(400).json({ error: "Email is required" });
       }
 
-      // Always return success for security (prevent email enumeration)
+      const normalizedEmail = email.trim().toLowerCase();
+      const user = await db.getUserByEmail(normalizedEmail);
+
+      if (user) {
+        const resetToken = randomBytes(32).toString("hex");
+        const resetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+        await db.setPasswordResetToken(user.id, resetToken, resetExpires);
+        await sendPasswordResetEmail(normalizedEmail, user.name || "User", resetToken);
+      }
+
+      // Always return success (prevent email enumeration)
       return res.json({
         success: true,
-        message: "If an account exists, you will receive a reset link",
+        message: "If an account exists with that email, you will receive a password reset link.",
       });
     } catch (e) {
       console.error("[ForgotPassword] failed", e);
@@ -282,10 +338,43 @@ async function startServer() {
     }
   });
 
-  // Upload avatar endpoint
-  app.post("/api/auth/upload-avatar", async (req, res) => {
+  // Reset password — validates token and updates password
+  app.post("/api/auth/reset-password", async (req, res) => {
     try {
-      // Get authenticated user from cookie
+      if (!bcrypt) {
+        return res.status(500).json({ error: "Server auth not ready" });
+      }
+
+      const { token, password } = req.body;
+      if (!token || !password) {
+        return res.status(400).json({ error: "Token and new password are required" });
+      }
+      if (password.length < 8) {
+        return res.status(400).json({ error: "Password must be at least 8 characters" });
+      }
+
+      const user = await db.getUserByPasswordResetToken(token);
+      if (!user) {
+        return res.status(400).json({ error: "Invalid or expired reset link" });
+      }
+
+      if (user.passwordResetExpires && new Date(user.passwordResetExpires) < new Date()) {
+        return res.status(400).json({ error: "Reset link has expired. Please request a new one." });
+      }
+
+      const passwordHash = await bcrypt.hash(password, 10);
+      await db.resetUserPassword(user.id, passwordHash);
+
+      return res.json({ success: true, message: "Password reset successfully" });
+    } catch (e) {
+      console.error("[ResetPassword] failed", e);
+      return res.status(500).json({ error: "Password reset failed" });
+    }
+  });
+
+  // Purchase confirmation email endpoint
+  app.post("/api/auth/send-purchase-email", async (req, res) => {
+    try {
       const cookies = req.headers.cookie || "";
       const cookieMap = new Map(
         cookies.split("; ").map((c) => {
@@ -305,23 +394,21 @@ async function startServer() {
       }
 
       const user = await db.getUserByOpenId(session.openId);
-      if (!user) {
+      if (!user || !user.email) {
         return res.status(401).json({ error: "User not found" });
       }
 
-      // For now, return a mock response
-      // In production, you would handle file upload with multer and save to S3 or local storage
-      const avatarUrl = `/uploads/avatars/${nanoid()}.jpg`;
-
-      await db.updateUserAvatar(user.id, avatarUrl);
-
-      return res.json({
-        success: true,
-        avatarUrl,
+      const { orderId, items, total } = req.body;
+      await sendPurchaseConfirmationEmail(user.email, user.name || "Customer", {
+        orderId,
+        items,
+        total,
       });
+
+      return res.json({ success: true });
     } catch (e) {
-      console.error("[UploadAvatar] failed", e);
-      return res.status(500).json({ error: "Avatar upload failed" });
+      console.error("[PurchaseEmail] failed", e);
+      return res.status(500).json({ error: "Failed to send confirmation email" });
     }
   });
 
