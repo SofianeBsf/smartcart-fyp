@@ -124,11 +124,11 @@ export default function Header() {
                     <DropdownMenuSeparator />
                   </>
                 )}
-                <DropdownMenuItem onClick={() => setLocation("/")}>
+                <DropdownMenuItem onClick={() => setLocation("/profile")}>
                   <User className="mr-2 h-4 w-4" />
                   Profile
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setLocation("/")}>
+                <DropdownMenuItem onClick={() => setLocation("/settings")}>
                   <Settings className="mr-2 h-4 w-4" />
                   Settings
                 </DropdownMenuItem>

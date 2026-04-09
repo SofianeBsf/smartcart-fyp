@@ -16,6 +16,8 @@ import Checkout from "./pages/Checkout";
 import Wishlist from "./pages/Wishlist";
 import VerifyEmail from "./pages/VerifyEmail";
 import ResetPassword from "./pages/ResetPassword";
+import Profile from "./pages/Profile";
+import Settings from "./pages/Settings";
 
 function Router() {
   return (
@@ -31,6 +33,8 @@ function Router() {
       <Route path="/cart" component={Cart} />
       <Route path="/checkout" component={Checkout} />
       <Route path="/wishlist" component={Wishlist} />
+      <Route path="/profile" component={Profile} />
+      <Route path="/settings" component={Settings} />
       <Route path="/admin" component={AdminDashboard} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />

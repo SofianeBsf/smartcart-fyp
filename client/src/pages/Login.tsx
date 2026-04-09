@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useLocation, Link } from "wouter";
+import { useState, useMemo } from "react";
+import { useLocation, Link, useSearch } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,6 +10,11 @@ import { toast } from "sonner";
 
 export default function Login() {
   const [, setLocation] = useLocation();
+  const searchString = useSearch();
+  const redirectTo = useMemo(() => {
+    const params = new URLSearchParams(searchString);
+    return params.get("redirect") || "/";
+  }, [searchString]);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
@@ -97,7 +102,7 @@ export default function Login() {
       }
 
       toast.success(`Welcome back, ${data.user?.name || ""}!`);
-      setLocation("/");
+      setLocation(redirectTo);
     } catch (err: any) {
       const msg = err.message || "Login failed. Please try again.";
       setError(msg);

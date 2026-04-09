@@ -415,6 +415,109 @@ async function startServer() {
 
 
 
+  // Update user profile (name)
+  app.put("/api/auth/profile", async (req, res) => {
+    try {
+      const cookies = req.headers.cookie || "";
+      const cookieMap = new Map(
+        cookies.split("; ").map((c) => {
+          const [key, ...rest] = c.split("=");
+          return [key, rest.join("=")];
+        })
+      );
+
+      const sessionToken = cookieMap.get(COOKIE_NAME);
+      if (!sessionToken) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const session = await sdk.verifySession(sessionToken);
+      if (!session) {
+        return res.status(401).json({ error: "Invalid session" });
+      }
+
+      const user = await db.getUserByOpenId(session.openId);
+      if (!user) {
+        return res.status(401).json({ error: "User not found" });
+      }
+
+      const { name } = req.body;
+      if (!name || !name.trim()) {
+        return res.status(400).json({ error: "Name is required" });
+      }
+
+      await db.upsertUser({
+        openId: user.openId,
+        name: name.trim(),
+        lastSignedIn: new Date(),
+      });
+
+      return res.json({ success: true, message: "Profile updated successfully" });
+    } catch (e) {
+      console.error("[Profile] update failed", e);
+      return res.status(500).json({ error: "Failed to update profile" });
+    }
+  });
+
+  // Change password
+  app.post("/api/auth/change-password", async (req, res) => {
+    try {
+      await loadBcrypt;
+      if (!bcrypt) {
+        return res.status(500).json({ error: "Password hashing not available" });
+      }
+
+      const cookies = req.headers.cookie || "";
+      const cookieMap = new Map(
+        cookies.split("; ").map((c) => {
+          const [key, ...rest] = c.split("=");
+          return [key, rest.join("=")];
+        })
+      );
+
+      const sessionToken = cookieMap.get(COOKIE_NAME);
+      if (!sessionToken) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const session = await sdk.verifySession(sessionToken);
+      if (!session) {
+        return res.status(401).json({ error: "Invalid session" });
+      }
+
+      const user = await db.getUserByOpenId(session.openId);
+      if (!user) {
+        return res.status(401).json({ error: "User not found" });
+      }
+
+      const { currentPassword, newPassword } = req.body;
+
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ error: "Current and new passwords are required" });
+      }
+
+      if (newPassword.length < 8) {
+        return res.status(400).json({ error: "New password must be at least 8 characters" });
+      }
+
+      // Verify current password
+      if (user.passwordHash) {
+        const isValid = await bcrypt.compare(currentPassword, user.passwordHash);
+        if (!isValid) {
+          return res.status(400).json({ error: "Current password is incorrect" });
+        }
+      }
+
+      const newHash = await bcrypt.hash(newPassword, 10);
+      await db.resetUserPassword(user.id, newHash);
+
+      return res.json({ success: true, message: "Password changed successfully" });
+    } catch (e) {
+      console.error("[ChangePassword] failed", e);
+      return res.status(500).json({ error: "Failed to change password" });
+    }
+  });
+
   // tRPC API
   app.use(
     "/api/trpc",

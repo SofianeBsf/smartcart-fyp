@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useCart } from "@/hooks/useCart";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +15,7 @@ export default function Checkout() {
   const [, setLocation] = useLocation();
   const { items, subtotal, clearCart } = useCart();
   const recordInteraction = trpc.session.recordInteraction.useMutation();
-  const userQuery = trpc.user.me.useQuery();
+  const { user, loading: authLoading, isAuthenticated } = useAuth();
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [orderConfirmed, setOrderConfirmed] = useState(false);
@@ -37,18 +38,17 @@ export default function Checkout() {
 
   // Pre-fill name from user data
   useEffect(() => {
-    if (userQuery.data?.name) {
-      setFormData((prev) => ({ ...prev, name: userQuery.data!.name || prev.name }));
-      setCardData((prev) => ({ ...prev, name: userQuery.data!.name || prev.name }));
+    if (user?.name) {
+      setFormData((prev) => ({ ...prev, name: user.name || prev.name }));
+      setCardData((prev) => ({ ...prev, name: user.name || prev.name }));
     }
-  }, [userQuery.data]);
+  }, [user]);
 
-  const isLoggedIn = !!userQuery.data?.id;
   const shipping = subtotal > 50 ? 0 : 5.99;
   const total = subtotal + shipping;
 
   // Not logged in — show login prompt
-  if (!userQuery.isLoading && !isLoggedIn) {
+  if (!authLoading && !isAuthenticated) {
     return (
       <div className="min-h-screen bg-background">
         <Header />
@@ -61,10 +61,10 @@ export default function Checkout() {
             <p className="text-muted-foreground mb-6">
               Please sign in to complete your purchase. Your cart items will be saved.
             </p>
-            <Button className="w-full mb-3" size="lg" onClick={() => setLocation("/login")}>
+            <Button className="w-full mb-3" size="lg" onClick={() => setLocation("/login?redirect=/checkout")}>
               Sign In
             </Button>
-            <Button variant="outline" className="w-full" onClick={() => setLocation("/register")}>
+            <Button variant="outline" className="w-full" onClick={() => setLocation("/register?redirect=/checkout")}>
               Create Account
             </Button>
           </div>

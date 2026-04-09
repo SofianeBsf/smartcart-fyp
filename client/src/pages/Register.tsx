@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useLocation, Link } from "wouter";
+import { useState, useMemo } from "react";
+import { useLocation, Link, useSearch } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,6 +10,11 @@ import { toast } from "sonner";
 
 export default function Register() {
   const [, setLocation] = useLocation();
+  const searchString = useSearch();
+  const redirectTo = useMemo(() => {
+    const params = new URLSearchParams(searchString);
+    return params.get("redirect") || "";
+  }, [searchString]);
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -100,7 +105,7 @@ export default function Register() {
       toast.success(data.message || "Account created successfully!", {
         duration: 6000,
       });
-      setLocation("/login");
+      setLocation(redirectTo ? `/login?redirect=${encodeURIComponent(redirectTo)}` : "/login");
     } catch (err: any) {
       const msg = err.message || "Registration failed. Please try again.";
       setError(msg);
@@ -252,7 +257,7 @@ export default function Register() {
                 className="w-full"
                 asChild
               >
-                <Link href="/login">Sign In</Link>
+                <Link href={redirectTo ? `/login?redirect=${encodeURIComponent(redirectTo)}` : "/login"}>Sign In</Link>
               </Button>
             </div>
           </CardContent>
