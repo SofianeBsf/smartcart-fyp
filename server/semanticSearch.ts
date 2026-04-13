@@ -688,22 +688,51 @@ export async function batchGenerateEmbeddings(
       }
 
       const filteredTexts = toEmbedIndexes.map(i => texts[i]);
-      const embeddings = await generateBatchEmbeddingsViaAI(filteredTexts);
 
-      // Persist each one
-      for (let k = 0; k < toEmbedIndexes.length; k++) {
-        const localIdx = toEmbedIndexes[k];
-        const productId = chunkIds[localIdx];
-        try {
-          await createEmbedding({
-            productId,
-            embedding: embeddings[k],
-            textUsed: filteredTexts[k].slice(0, 1000),
-          });
-          success++;
-        } catch (e) {
-          console.error("[SemanticSearch] Failed to store embedding for", productId, e);
-          failed++;
+      // Try batch first; if it fails (e.g. OOM on small servers), fall back to one-by-one
+      let embeddings: number[][] | null = null;
+      try {
+        embeddings = await generateBatchEmbeddingsViaAI(filteredTexts);
+      } catch (batchErr) {
+        console.warn("[SemanticSearch] Batch embed failed, falling back to single mode:", batchErr);
+      }
+
+      if (embeddings) {
+        // Batch succeeded — persist each one
+        for (let k = 0; k < toEmbedIndexes.length; k++) {
+          const localIdx = toEmbedIndexes[k];
+          const productId = chunkIds[localIdx];
+          try {
+            await createEmbedding({
+              productId,
+              embedding: embeddings[k],
+              textUsed: filteredTexts[k].slice(0, 1000),
+            });
+            success++;
+          } catch (e) {
+            console.error("[SemanticSearch] Failed to store embedding for", productId, e);
+            failed++;
+          }
+        }
+      } else {
+        // Fallback: embed one product at a time via /embed (single text)
+        for (let k = 0; k < toEmbedIndexes.length; k++) {
+          const localIdx = toEmbedIndexes[k];
+          const productId = chunkIds[localIdx];
+          try {
+            const embedding = await generateEmbeddingViaAI(filteredTexts[k]);
+            await createEmbedding({
+              productId,
+              embedding,
+              textUsed: filteredTexts[k].slice(0, 1000),
+            });
+            success++;
+          } catch (e) {
+            console.error("[SemanticSearch] Single embed failed for", productId, e);
+            failed++;
+          }
+          // Small delay between single requests
+          if (isRemote) await new Promise(r => setTimeout(r, 200));
         }
       }
       // Count the skipped (missing product) rows as failures
