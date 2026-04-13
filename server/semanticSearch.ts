@@ -657,7 +657,10 @@ export async function batchGenerateEmbeddings(
     return { success: 0, failed: productIds.length };
   }
 
-  const CHUNK_SIZE = 32;
+  // Smaller chunks for cloud deployments with limited RAM (Render free = 512MB)
+  const aiUrl = process.env.AI_SERVICE_URL || "http://localhost:8000";
+  const isRemote = !aiUrl.includes("localhost");
+  const CHUNK_SIZE = isRemote ? 8 : 32;
   let success = 0;
   let failed = 0;
   let completed = 0;
@@ -715,6 +718,11 @@ export async function batchGenerateEmbeddings(
 
     completed += chunkIds.length;
     onProgress?.(completed, productIds.length);
+
+    // Small delay between chunks to avoid overwhelming the AI service
+    if (isRemote && offset + CHUNK_SIZE < productIds.length) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
   }
 
   return { success, failed };
