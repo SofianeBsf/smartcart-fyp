@@ -189,12 +189,13 @@ async function startServer() {
       // Save verification token
       await db.setVerificationToken(userId, verificationToken, verificationTokenExpires);
 
-      // Send verification email
-      const emailResult = await sendVerificationEmail(normalizedEmail, name.trim(), verificationToken);
-
-      if (!emailResult.success) {
-        console.warn("[Register] Verification email failed:", emailResult.error);
-      }
+      // Send verification email in the background — don't block registration
+      sendVerificationEmail(normalizedEmail, name.trim(), verificationToken)
+        .then(result => {
+          if (!result.success) console.warn("[Register] Verification email failed:", result.error);
+          else console.log("[Register] Verification email sent to", normalizedEmail);
+        })
+        .catch(err => console.warn("[Register] Email error:", err));
 
       return res.status(201).json({
         success: true,

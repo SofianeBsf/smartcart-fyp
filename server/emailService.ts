@@ -18,6 +18,9 @@ const transporter =
           user: SMTP_USER,
           pass: SMTP_PASS,
         },
+        connectionTimeout: 10000, // 10s to connect
+        greetingTimeout: 10000,   // 10s for SMTP greeting
+        socketTimeout: 15000,     // 15s for socket inactivity
       })
     : null;
 

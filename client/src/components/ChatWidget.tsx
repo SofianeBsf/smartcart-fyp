@@ -132,6 +132,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
 export function ChatWidget() {
   const [isOpen, setIsOpen] = useState(false);
+  const [hasBeenOpened, setHasBeenOpened] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [conversationId, setConversationId] = useState<number | undefined>();
@@ -216,8 +217,8 @@ export function ChatWidget() {
       {/* Floating bubble — higher on mobile to avoid overlapping filter buttons */}
       {!isOpen && (
         <button
-          onClick={() => setIsOpen(true)}
-          className="fixed bottom-20 right-4 sm:bottom-6 sm:right-6 z-50 w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg hover:shadow-xl hover:scale-105 transition-all flex items-center justify-center group"
+          onClick={() => { setIsOpen(true); setHasBeenOpened(true); }}
+          className={`fixed bottom-20 right-4 sm:bottom-6 sm:right-6 z-50 w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg hover:shadow-xl hover:scale-105 transition-all flex items-center justify-center group ${!hasBeenOpened ? "animate-bounce" : ""}`}
           aria-label="Open chat assistant"
         >
           <MessageCircle className="w-6 h-6 group-hover:scale-110 transition-transform" />

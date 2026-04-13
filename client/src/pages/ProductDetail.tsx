@@ -309,7 +309,6 @@ export default function ProductDetail() {
                     quantity: 1,
                   });
                   setAddedToCart(true);
-                  setTimeout(() => setAddedToCart(false), 2000);
                   recordInteraction.mutate({
                     productId: product.id,
                     interactionType: "add_to_cart",
@@ -319,6 +318,14 @@ export default function ProductDetail() {
                 <ShoppingCart className="w-5 h-5 mr-2" />
                 {addedToCart ? "Added!" : "Add to Cart"}
               </Button>
+
+              {addedToCart && (
+                <Link href="/cart">
+                  <Button size="lg" variant="outline" className="flex-1">
+                    View Cart
+                  </Button>
+                </Link>
+              )}
 
               <Button
                 size="lg"
