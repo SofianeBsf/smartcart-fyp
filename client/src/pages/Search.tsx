@@ -22,10 +22,6 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
-  Sheet,
-  SheetContent,
-} from "@/components/ui/sheet";
-import {
   Search as SearchIcon,
   Filter,
   ChevronDown,
@@ -293,88 +289,103 @@ export default function Search() {
             </Button>
           </div>
 
-          {/* Mobile Filter Sheet */}
-          <Sheet open={showFilters} onOpenChange={setShowFilters}>
-            <SheetContent side="bottom" className="h-[65vh] rounded-t-2xl">
-              <div className="flex items-center justify-between pr-10 pl-2 pt-1 pb-1">
-                <span className="flex items-center gap-2 font-semibold text-base">
-                  <Filter className="w-4 h-4" />
-                  Filters
-                </span>
-                {hasActiveFilters && (
-                  <Button variant="ghost" size="sm" onClick={clearFilters}>
-                    Clear All
-                  </Button>
-                )}
-              </div>
-              <div className="space-y-6 overflow-y-auto px-4 pb-6 pt-2">
-                {/* Category Filter */}
-                <div className="space-y-2">
-                  <Label>Category</Label>
-                  <Select value={category || "all"} onValueChange={(val) => setCategory(val === "all" ? "" : val)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="All categories" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All categories</SelectItem>
-                      {categories?.map((cat) => (
-                        <SelectItem key={cat} value={cat}>
-                          {cat}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* Price Range */}
-                <div className="space-y-3">
-                  <Label>Price Range</Label>
-                  <Slider
-                    value={priceRange}
-                    onValueChange={(value) => setPriceRange(value as [number, number])}
-                    min={0}
-                    max={1000}
-                    step={10}
-                  />
-                  <div className="flex items-center justify-between text-sm text-muted-foreground">
-                    <span>£{priceRange[0]}</span>
-                    <span>£{priceRange[1]}{priceRange[1] >= 1000 ? "+" : ""}</span>
+          {/* Mobile Filter Drawer */}
+          {showFilters && (
+            <>
+              {/* Backdrop */}
+              <div
+                className="lg:hidden fixed inset-0 z-50 bg-black/50"
+                onClick={() => setShowFilters(false)}
+              />
+              {/* Drawer */}
+              <div className="lg:hidden fixed bottom-0 left-2 right-2 z-50 bg-background rounded-t-2xl shadow-2xl border border-b-0 border-border animate-in slide-in-from-bottom duration-300">
+                <div className="p-4 space-y-5 max-h-[60vh] overflow-y-auto">
+                  {/* Header */}
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-2 font-semibold text-base">
+                      <Filter className="w-4 h-4" />
+                      Filters
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {hasActiveFilters && (
+                        <Button variant="ghost" size="sm" onClick={clearFilters}>
+                          Clear All
+                        </Button>
+                      )}
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setShowFilters(false)}>
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
                   </div>
-                </div>
 
-                {/* In Stock Only */}
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="in-stock-mobile">In Stock Only</Label>
-                  <Switch
-                    id="in-stock-mobile"
-                    checked={inStockOnly}
-                    onCheckedChange={setInStockOnly}
-                  />
-                </div>
+                  {/* Category Filter */}
+                  <div className="space-y-2">
+                    <Label>Category</Label>
+                    <Select value={category || "all"} onValueChange={(val) => setCategory(val === "all" ? "" : val)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="All categories" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All categories</SelectItem>
+                        {categories?.map((cat) => (
+                          <SelectItem key={cat} value={cat}>
+                            {cat}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-                {/* Sort By */}
-                <div className="space-y-2">
-                  <Label>Sort By</Label>
-                  <Select value={sortBy} onValueChange={setSortBy}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="relevance">Relevance</SelectItem>
-                      <SelectItem value="price-low">Price: Low to High</SelectItem>
-                      <SelectItem value="price-high">Price: High to Low</SelectItem>
-                      <SelectItem value="rating">Highest Rated</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+                  {/* Price Range */}
+                  <div className="space-y-3">
+                    <Label>Price Range</Label>
+                    <Slider
+                      value={priceRange}
+                      onValueChange={(value) => setPriceRange(value as [number, number])}
+                      min={0}
+                      max={1000}
+                      step={10}
+                    />
+                    <div className="flex items-center justify-between text-sm text-muted-foreground">
+                      <span>£{priceRange[0]}</span>
+                      <span>£{priceRange[1]}{priceRange[1] >= 1000 ? "+" : ""}</span>
+                    </div>
+                  </div>
 
-                {/* Apply button */}
-                <Button className="w-full" onClick={() => setShowFilters(false)}>
-                  Apply Filters
-                </Button>
+                  {/* In Stock Only */}
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="in-stock-mobile">In Stock Only</Label>
+                    <Switch
+                      id="in-stock-mobile"
+                      checked={inStockOnly}
+                      onCheckedChange={setInStockOnly}
+                    />
+                  </div>
+
+                  {/* Sort By */}
+                  <div className="space-y-2">
+                    <Label>Sort By</Label>
+                    <Select value={sortBy} onValueChange={setSortBy}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="relevance">Relevance</SelectItem>
+                        <SelectItem value="price-low">Price: Low to High</SelectItem>
+                        <SelectItem value="price-high">Price: High to Low</SelectItem>
+                        <SelectItem value="rating">Highest Rated</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Apply button */}
+                  <Button className="w-full" onClick={() => setShowFilters(false)}>
+                    Apply Filters
+                  </Button>
+                </div>
               </div>
-            </SheetContent>
-          </Sheet>
+            </>
+          )}
 
           {/* Results Grid */}
           <main className="flex-1">

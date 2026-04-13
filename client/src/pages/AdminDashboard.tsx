@@ -253,6 +253,12 @@ function OverviewTab() {
           />
           <QuickActionButton
             icon={Database}
+            title="Test Single Embedding"
+            description="Test embed 1 product — shows exact error"
+            action="testEmbed"
+          />
+          <QuickActionButton
+            icon={Database}
             title="Clear Search Cache"
             description="Clear cached search results"
             action="cache"
@@ -353,22 +359,35 @@ function QuickActionButton({
   action: string;
 }) {
   const [isLoading, setIsLoading] = useState(false);
+  const [lastError, setLastError] = useState<string | null>(null);
   const generateEmbeddings = trpc.admin.products.generateAllEmbeddings.useMutation();
+  const testEmbedding = trpc.admin.products.testSingleEmbedding.useMutation();
   const clearCache = trpc.admin.system.clearSearchCache.useMutation();
   const calculateMetrics = trpc.admin.stats.calculateIRMetrics.useMutation();
 
   const handleClick = async () => {
     setIsLoading(true);
+    setLastError(null);
     try {
-      if (action === "embeddings") {
-        const result = await generateEmbeddings.mutateAsync() as any;
-        if (result.failed > 0 && result.errors?.length > 0) {
-          toast.error(
-            `Generated ${result.success}/${result.success + result.failed} embeddings.\n\nErrors:\n${result.errors.join("\n")}`,
-            { duration: 15000 },
-          );
+      if (action === "testEmbed") {
+        const result = await testEmbedding.mutateAsync() as any;
+        if (result.ok) {
+          setLastError(null);
+          toast.success(`Embedding OK! Product #${result.productId} "${result.title}" → ${result.embeddingDim}d vector. AI: ${result.aiServiceUrl}`);
         } else {
-          toast.success(`Generated ${result.success} embeddings (${result.failed} failed)`);
+          setLastError(`Test failed: ${result.error}\nAI URL: ${result.aiServiceUrl || "unknown"}\nProduct: ${result.productId || "N/A"}`);
+          toast.error("Test embedding failed — see details below");
+        }
+      } else if (action === "embeddings") {
+        const result = await generateEmbeddings.mutateAsync() as any;
+        if (result.failed > 0) {
+          const errMsg = result.errors?.length > 0
+            ? result.errors.join(" | ")
+            : "No error details returned";
+          setLastError(`${result.success} succeeded, ${result.failed} failed. Errors: ${errMsg}`);
+          toast.error(`Generated ${result.success} embeddings (${result.failed} failed)`, { duration: 8000 });
+        } else {
+          toast.success(`Generated ${result.success} embeddings`);
         }
       } else if (action === "cache") {
         const result = await clearCache.mutateAsync();
@@ -391,17 +410,20 @@ function QuickActionButton({
       } else {
         toast.info("Unknown action");
       }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Action failed");
+    } catch (error: any) {
+      const msg = error?.message || error?.data?.message || JSON.stringify(error) || "Unknown error";
+      setLastError(msg);
+      toast.error("Action failed — see error details below");
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
+    <div className="space-y-2">
     <Button
       variant="outline"
-      className="h-auto p-4 flex flex-col items-start gap-2"
+      className="w-full h-auto p-4 flex flex-col items-start gap-2"
       onClick={handleClick}
       disabled={isLoading}
     >
@@ -415,6 +437,13 @@ function QuickActionButton({
         <p className="text-xs text-muted-foreground font-normal">{description}</p>
       </div>
     </Button>
+    {lastError && (
+      <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-xs text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-300">
+        <p className="font-semibold mb-1">Error Details:</p>
+        <p className="whitespace-pre-wrap break-all">{lastError}</p>
+      </div>
+    )}
+    </div>
   );
 }
 

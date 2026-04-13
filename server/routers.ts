@@ -717,6 +717,49 @@ export const appRouter = router({
           throw error;
         }
       }),
+
+      // Test embedding for a single product — returns detailed error info
+      testSingleEmbedding: adminProcedure.mutation(async () => {
+        const allProducts = await getAllProducts(1, 0);
+        if (allProducts.length === 0) return { ok: false, error: "No products found" };
+
+        const product = allProducts[0];
+        const aiUrl = process.env.AI_SERVICE_URL || "http://localhost:8000";
+
+        try {
+          // Step 1: health check
+          const healthy = await checkAIServiceHealth();
+          if (!healthy) return { ok: false, error: `AI service health check failed (${aiUrl})` };
+
+          // Step 2: build text
+          const text = [product.title, product.description, product.category].filter(Boolean).join(" ");
+          if (!text.trim()) return { ok: false, error: `Product ${product.id} has no text to embed` };
+
+          // Step 3: call /embed
+          const embedding = await generateEmbeddingViaAI(text);
+          if (!embedding || embedding.length === 0) return { ok: false, error: "AI service returned empty embedding" };
+
+          // Step 4: try to store it
+          await createEmbedding({ productId: product.id, embedding, textUsed: text.slice(0, 500) });
+
+          return {
+            ok: true,
+            productId: product.id,
+            title: product.title,
+            embeddingDim: embedding.length,
+            aiServiceUrl: aiUrl,
+          };
+        } catch (e: any) {
+          const status = e?.response?.status || e?.cause?.code || "";
+          const detail = e?.response?.data?.detail || e?.message || String(e);
+          return {
+            ok: false,
+            error: `${status ? `HTTP ${status}: ` : ""}${detail}`,
+            aiServiceUrl: aiUrl,
+            productId: product.id,
+          };
+        }
+      }),
     }),
 
     // Catalog upload management
