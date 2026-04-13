@@ -17,6 +17,9 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 import logging
 from functools import lru_cache
+from datetime import datetime, timezone
+import math
+import os
 import time
 
 # Configure logging
@@ -44,13 +47,45 @@ app.add_middleware(
 # Global model instance (loaded lazily)
 _model: Optional[SentenceTransformer] = None
 
+# Model configuration — BAAI/bge-small-en-v1.5 is a stronger retrieval model than
+# all-MiniLM-L6-v2 at the same embedding dimension (384) and CPU footprint.
+# Override with MODEL_NAME env var if needed (e.g., for offline eval).
+MODEL_NAME = os.environ.get("MODEL_NAME", "BAAI/bge-small-en-v1.5")
+
+# BGE models expect a query prefix for asymmetric retrieval.
+# See https://huggingface.co/BAAI/bge-small-en-v1.5
+BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+
+# Per-model embedding cache (survives across requests). Keyed by product id.
+# Cleared via /admin/clear-cache.
+_embedding_cache: Dict[int, np.ndarray] = {}
+
+
+def _is_bge_model(name: str) -> bool:
+    return name.lower().startswith("baai/bge")
+
+
+def encode_query(text: str) -> np.ndarray:
+    """Encode a search query, applying the BGE prefix if needed."""
+    model = get_model()
+    if _is_bge_model(MODEL_NAME):
+        text = BGE_QUERY_PREFIX + text
+    return model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
+
+
+def encode_passage(text: str) -> np.ndarray:
+    """Encode a passage/product text (no prefix)."""
+    model = get_model()
+    return model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
+
+
 def get_model() -> SentenceTransformer:
     """Lazy load the Sentence-BERT model."""
     global _model
     if _model is None:
-        logger.info("Loading Sentence-BERT model (all-MiniLM-L6-v2)...")
+        logger.info(f"Loading embedding model ({MODEL_NAME})...")
         start_time = time.time()
-        _model = SentenceTransformer('all-MiniLM-L6-v2')
+        _model = SentenceTransformer(MODEL_NAME)
         logger.info(f"Model loaded in {time.time() - start_time:.2f}s")
     return _model
 
@@ -214,6 +249,55 @@ def generate_explanation(
     return " • ".join(parts) if parts else "Relevant to your search"
 
 
+def _compute_recency_score(created_at: Optional[str]) -> float:
+    """Compute a recency score in [0, 1] from a product's created_at ISO timestamp.
+
+    Uses exponential decay with a half-life of 180 days, so a brand-new product
+    gets ~1.0 and a product added 6 months ago gets ~0.5. Products older than
+    ~2 years asymptote toward 0. Missing timestamps get a neutral 0.5.
+    """
+    if not created_at:
+        return 0.5
+    try:
+        # Support both naive ISO and 'Z' suffix
+        ts = created_at.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(ts)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        age_days = max(0.0, (now - dt).total_seconds() / 86400.0)
+        half_life_days = 180.0
+        score = math.exp(-math.log(2) * age_days / half_life_days)
+        return float(max(0.0, min(1.0, score)))
+    except Exception as e:
+        logger.debug(f"Failed to parse created_at '{created_at}': {e}")
+        return 0.5
+
+
+def _get_or_build_product_embedding(product: Product) -> np.ndarray:
+    """Return the product embedding, generating & caching it if missing."""
+    # If the DB sent a precomputed embedding, trust it (normalized downstream).
+    if product.embedding:
+        vec = np.asarray(product.embedding, dtype=np.float32)
+        # Normalize in case the DB stored an un-normalized vector
+        norm = np.linalg.norm(vec)
+        return vec / norm if norm > 0 else vec
+
+    # In-memory cache keyed by product id (per-model lifetime)
+    cached = _embedding_cache.get(product.id)
+    if cached is not None:
+        return cached
+
+    product_text = " ".join(filter(None, [
+        product.title,
+        product.description or "",
+        product.category or "",
+    ])).strip()
+    vec = encode_passage(product_text)
+    _embedding_cache[product.id] = vec
+    return vec
+
+
 def calculate_scores(
     query_embedding: np.ndarray,
     product: Product,
@@ -221,23 +305,33 @@ def calculate_scores(
     all_prices: List[float],
     query: str
 ) -> ScoreBreakdown:
-    """Calculate all scoring components for a product."""
-    
-    # Semantic similarity score
-    if product.embedding:
-        product_embedding = np.array(product.embedding)
-        semantic_score = cosine_similarity(query_embedding, product_embedding)
-    else:
-        semantic_score = 0.0
-    
-    # Keyword boost - boost products that contain query terms
+    """Calculate all scoring components for a product.
+
+    This is a PURE dense-retrieval score for the semantic component — no
+    keyword boosting. Keyword matches are only surfaced in the explanation and
+    `matched_terms` so the UI can highlight them, but they do NOT move the
+    ranking. This keeps the dissertation claim honest: the α term reflects
+    semantic similarity, not lexical overlap.
+    """
+
+    # --- Semantic similarity (pure cosine on normalized embeddings) ---
+    product_embedding = _get_or_build_product_embedding(product)
+    # Embeddings are normalized so cosine == dot product, but we keep the
+    # safe helper in case an un-normalized vector slips through.
+    raw_sim = cosine_similarity(query_embedding, product_embedding)
+    # BGE cosines typically land in [0.2, 0.85]. Keep the raw value (clamped
+    # to [0, 1]) rather than rescaling from [-1, 1]: the linear rescale
+    # compresses the discriminative range so much that rating/price/stock
+    # terms can easily beat semantic relevance. Clamping to [0, 1] preserves
+    # the full ~0.65 spread between unrelated and highly-related products.
+    semantic_score = max(0.0, min(1.0, raw_sim))
+
+    # Matched terms are informational only (not added to the score).
     matched_terms = extract_matched_terms(query, product)
-    keyword_boost = min(len(matched_terms) * 0.15, 0.5)  # Up to 0.5 boost
-    semantic_score = min(semantic_score + keyword_boost, 1.0)
-    
+
     # Rating score (normalized 0-1)
     rating_score = (product.rating or 0) / 5.0
-    
+
     # Price score (lower is better, normalized)
     if all_prices and product.price:
         max_price = max(all_prices) if all_prices else 1
@@ -249,13 +343,13 @@ def calculate_scores(
             price_score = 1.0
     else:
         price_score = 0.5
-    
+
     # Stock score
     stock_map = {"in_stock": 1.0, "low_stock": 0.5, "out_of_stock": 0.0}
     stock_score = stock_map.get(product.availability or "in_stock", 0.5)
-    
-    # Recency score (placeholder - would use created_at in production)
-    recency_score = 0.5
+
+    # Recency score: exponential decay on created_at (half-life 180d).
+    recency_score = _compute_recency_score(product.created_at)
     
     # Calculate final weighted score
     final_score = (
@@ -307,16 +401,115 @@ async def health_check():
     return {
         "status": "healthy",
         "model_loaded": model_loaded,
-        "model_name": "all-MiniLM-L6-v2" if model_loaded else "not loaded"
+        "model_name": MODEL_NAME if model_loaded else "not loaded",
+        "embedding_cache_size": len(_embedding_cache),
+    }
+
+
+class EmbeddingCheckRequest(BaseModel):
+    """Request to sanity-check a set of stored embeddings."""
+    samples: List[Dict[str, Any]]  # each: { id, text, embedding }
+
+
+@app.post("/admin/embedding-health")
+async def embedding_health(request: EmbeddingCheckRequest):
+    """Diagnose whether stored product embeddings come from the current
+    embedding model (BGE) or from a stale/different model (e.g. the old
+    TF-IDF hash vectors that used to poison the table).
+
+    For each sample we re-embed the product text with the live BGE model
+    and compute cosine similarity against the stored vector. If the live
+    model matches what produced the stored vector, cosine should be ~1.0.
+    A cosine near 0 means the vectors are from completely different spaces
+    (classic TF-IDF-vs-BGE), which is the signature of a broken regeneration.
+    """
+    try:
+        results = []
+        for sample in request.samples:
+            stored = sample.get("embedding")
+            text = sample.get("text", "")
+            pid = sample.get("id")
+            if not stored or not text:
+                results.append({
+                    "id": pid,
+                    "cosine_to_fresh": None,
+                    "status": "missing_data",
+                })
+                continue
+
+            stored_vec = np.asarray(stored, dtype=np.float32)
+            s_norm = np.linalg.norm(stored_vec)
+            if s_norm == 0:
+                results.append({
+                    "id": pid,
+                    "cosine_to_fresh": 0.0,
+                    "status": "stored_zero_vector",
+                })
+                continue
+            stored_vec = stored_vec / s_norm
+
+            fresh = encode_passage(text)
+            cos = float(np.dot(stored_vec, fresh))
+            if cos >= 0.95:
+                status = "ok_bge"
+            elif cos >= 0.5:
+                status = "suspicious_partial_match"
+            else:
+                status = "mismatch_different_model"
+            results.append({
+                "id": pid,
+                "cosine_to_fresh": round(cos, 4),
+                "status": status,
+                "stored_dim": len(stored),
+                "fresh_dim": int(fresh.shape[0]),
+            })
+
+        # Aggregate verdict
+        oks = sum(1 for r in results if r.get("status") == "ok_bge")
+        total = len(results)
+        verdict = (
+            "healthy" if oks == total and total > 0
+            else "broken" if oks == 0
+            else "mixed"
+        )
+        return {
+            "model_name": MODEL_NAME,
+            "verdict": verdict,
+            "ok_count": oks,
+            "total": total,
+            "samples": results,
+        }
+    except Exception as e:
+        logger.error(f"Error in embedding-health: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/admin/clear-cache")
+async def clear_cache():
+    """Clear the in-memory product-embedding cache used by /search fallback.
+
+    This does NOT evict the loaded model (reloading a 130MB model is wasteful).
+    It only flushes the product-embedding dict so that the next search
+    recomputes embeddings for products without a precomputed one.
+    """
+    size = len(_embedding_cache)
+    _embedding_cache.clear()
+    return {
+        "status": "success",
+        "cleared_entries": size,
+        "model_name": MODEL_NAME,
     }
 
 
 @app.post("/embed", response_model=EmbeddingResponse)
 async def generate_embedding(request: EmbeddingRequest):
-    """Generate embedding for a single text."""
+    """Generate embedding for a single text (passage, no query prefix).
+
+    Use this for products / documents. For search queries use `/embed/query`
+    so the BGE query prefix is applied — mixing the two breaks retrieval.
+    """
     try:
-        model = get_model()
-        embedding = model.encode(request.text, convert_to_numpy=True)
+        embedding = encode_passage(request.text)
         return EmbeddingResponse(
             embedding=embedding.tolist(),
             dimension=len(embedding)
@@ -326,12 +519,37 @@ async def generate_embedding(request: EmbeddingRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/embed/query", response_model=EmbeddingResponse)
+async def generate_query_embedding(request: EmbeddingRequest):
+    """Generate embedding for a SEARCH QUERY.
+
+    For BGE models this prepends the required query prefix
+    ("Represent this sentence for searching relevant passages: ") so the
+    resulting vector lives in the same space the model expects to compare
+    against passage vectors. Using `/embed` for queries silently degrades
+    retrieval quality — always use this endpoint for user queries.
+    """
+    try:
+        embedding = encode_query(request.text)
+        return EmbeddingResponse(
+            embedding=embedding.tolist(),
+            dimension=len(embedding)
+        )
+    except Exception as e:
+        logger.error(f"Error generating query embedding: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/embed/batch", response_model=BatchEmbeddingResponse)
 async def generate_batch_embeddings(request: BatchEmbeddingRequest):
-    """Generate embeddings for multiple texts."""
+    """Generate embeddings for multiple texts (passages, no query prefix)."""
     try:
         model = get_model()
-        embeddings = model.encode(request.texts, convert_to_numpy=True)
+        embeddings = model.encode(
+            request.texts,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+        )
         return BatchEmbeddingResponse(
             embeddings=[emb.tolist() for emb in embeddings],
             dimension=embeddings.shape[1] if len(embeddings) > 0 else 0,
@@ -358,13 +576,12 @@ async def semantic_search(request: SemanticSearchRequest):
     - ε (epsilon): Weight for recency (default 0.05)
     """
     start_time = time.time()
-    
+
     try:
-        model = get_model()
         weights = request.weights or RankingWeights()
-        
-        # Generate query embedding
-        query_embedding = model.encode(request.query, convert_to_numpy=True)
+
+        # Generate query embedding (with BGE prefix if applicable, normalized)
+        query_embedding = encode_query(request.query)
         
         # Filter products
         filtered_products = request.products
@@ -429,18 +646,20 @@ async def semantic_search(request: SemanticSearchRequest):
 async def find_similar_products(request: SimilarProductsRequest):
     """Find products similar to a given product embedding."""
     try:
-        source_embedding = np.array(request.product_embedding)
-        
+        source_embedding = np.array(request.product_embedding, dtype=np.float32)
+        src_norm = np.linalg.norm(source_embedding)
+        if src_norm > 0:
+            source_embedding = source_embedding / src_norm
+
         # Calculate similarity for each product
         similarities = []
         for product in request.products:
             if request.exclude_id and product.id == request.exclude_id:
                 continue
-            
-            if product.embedding:
-                product_embedding = np.array(product.embedding)
-                similarity = cosine_similarity(source_embedding, product_embedding)
-                similarities.append((product, similarity))
+
+            product_embedding = _get_or_build_product_embedding(product)
+            similarity = cosine_similarity(source_embedding, product_embedding)
+            similarities.append((product, similarity))
         
         # Sort by similarity descending
         similarities.sort(key=lambda x: x[1], reverse=True)
@@ -448,13 +667,14 @@ async def find_similar_products(request: SimilarProductsRequest):
         # Build results
         results = []
         for rank, (product, similarity) in enumerate(similarities[:request.limit], 1):
+            normalized_sim = max(0.0, min(1.0, similarity))
             breakdown = ScoreBreakdown(
-                semantic_score=round(similarity, 4),
+                semantic_score=round(normalized_sim, 4),
                 rating_score=round((product.rating or 0) / 5.0, 4),
                 price_score=0.5,
                 stock_score=1.0 if product.availability == "in_stock" else 0.5,
-                recency_score=0.5,
-                final_score=round(similarity, 4),
+                recency_score=round(_compute_recency_score(product.created_at), 4),
+                final_score=round(normalized_sim, 4),
                 matched_terms=[],
                 explanation="Similar to viewed product"
             )
@@ -475,11 +695,11 @@ async def find_similar_products(request: SimilarProductsRequest):
 async def preload_model():
     """Preload the Sentence-BERT model."""
     try:
-        model = get_model()
+        get_model()
         return {
             "status": "success",
             "message": "Model loaded successfully",
-            "model_name": "all-MiniLM-L6-v2"
+            "model_name": MODEL_NAME,
         }
     except Exception as e:
         logger.error(f"Error preloading model: {e}")

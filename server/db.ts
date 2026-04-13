@@ -1,5 +1,7 @@
 import { neon } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-http";
+import { drizzle as drizzleNeon } from "drizzle-orm/neon-http";
+import { drizzle as drizzlePg } from "drizzle-orm/node-postgres";
+import pg from "pg";
 import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import {
   InsertUser, users,
@@ -14,10 +16,12 @@ import {
   evaluationMetrics, InsertEvaluationMetric,
   cartItems, InsertCartItem,
   wishlistItems, InsertWishlistItem,
+  chatConversations, InsertChatConversation,
+  chatMessages, InsertChatMessage,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
-let _db: ReturnType<typeof drizzle> | null = null;
+let _db: any | null = null;
 
 
 let _legacyProductColumnsBackfilled = false;
@@ -26,7 +30,7 @@ let _embeddingTableEnsured = false;
 let _usersTableEnsured = false;
 let _allTablesEnsured = false;
 
-async function ensureUsersTableExists(db: ReturnType<typeof drizzle>) {
+async function ensureUsersTableExists(db: any) {
   if (_usersTableEnsured) return;
 
   await db.execute(sql`
@@ -71,7 +75,7 @@ async function ensureUsersTableExists(db: ReturnType<typeof drizzle>) {
   _usersTableEnsured = true;
 }
 
-async function ensureProductEmbeddingsTableExists(db: ReturnType<typeof drizzle>) {
+async function ensureProductEmbeddingsTableExists(db: any) {
   if (_embeddingTableEnsured) return;
 
   await db.execute(sql`
@@ -89,7 +93,7 @@ async function ensureProductEmbeddingsTableExists(db: ReturnType<typeof drizzle>
   _embeddingTableEnsured = true;
 }
 
-async function backfillLegacyProductColumns(db: ReturnType<typeof drizzle>) {
+async function backfillLegacyProductColumns(db: any) {
   if (_legacyProductColumnsBackfilled) return;
 
   await db.execute(sql`
@@ -185,7 +189,7 @@ async function backfillLegacyProductColumns(db: ReturnType<typeof drizzle>) {
   _legacyProductColumnsBackfilled = true;
 }
 
-async function backfillLegacyEmbeddingColumns(db: ReturnType<typeof drizzle>) {
+async function backfillLegacyEmbeddingColumns(db: any) {
   if (_legacyEmbeddingColumnsBackfilled) return;
 
   await db.execute(sql`
@@ -252,7 +256,7 @@ async function backfillLegacyEmbeddingColumns(db: ReturnType<typeof drizzle>) {
  * This handles Neon.tech databases where tables may have been created
  * with an older schema missing newer columns.
  */
-async function ensureAllTablesAndColumns(db: ReturnType<typeof drizzle>) {
+async function ensureAllTablesAndColumns(db: any) {
   if (_allTablesEnsured) return;
 
   try {
@@ -406,6 +410,36 @@ async function ensureAllTablesAndColumns(db: ReturnType<typeof drizzle>) {
       );
     `);
 
+    // Ensure chatbot tables
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS chat_conversations (
+        id serial PRIMARY KEY,
+        session_id varchar(128) NOT NULL,
+        user_id integer,
+        title text,
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    await db.execute(sql`
+      DO $$ BEGIN
+        CREATE TYPE chat_role AS ENUM ('user', 'assistant');
+      EXCEPTION WHEN duplicate_object THEN null;
+      END $$;
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS chat_messages (
+        id serial PRIMARY KEY,
+        conversation_id integer NOT NULL,
+        role chat_role NOT NULL,
+        content text NOT NULL,
+        product_ids jsonb,
+        created_at timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
     _allTablesEnsured = true;
     console.log("[Database] All tables and columns verified.");
   } catch (error) {
@@ -417,13 +451,23 @@ async function ensureAllTablesAndColumns(db: ReturnType<typeof drizzle>) {
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      // Use Neon HTTP driver — bypasses TCP/SSL issues entirely
-      const neonSql = neon(process.env.DATABASE_URL);
-      _db = drizzle(neonSql);
+      const dbUrl = process.env.DATABASE_URL;
+      const isNeon = dbUrl.includes("neon.tech") || dbUrl.includes("neon.");
+
+      if (isNeon) {
+        // Neon HTTP driver — works over HTTPS, no TCP socket needed
+        const neonSql = neon(dbUrl);
+        _db = drizzleNeon(neonSql);
+        console.log("[Database] Connected via Neon HTTP driver.");
+      } else {
+        // Standard pg driver — works with local PostgreSQL / Docker / any PG
+        const pool = new pg.Pool({ connectionString: dbUrl });
+        _db = drizzlePg(pool);
+        console.log("[Database] Connected via standard pg driver.");
+      }
 
       // Test the connection
       await _db.execute(sql`SELECT 1`);
-      console.log("[Database] Connected via Neon HTTP driver.");
 
       await ensureUsersTableExists(_db);
       await ensureProductEmbeddingsTableExists(_db);
@@ -713,7 +757,7 @@ export async function getCategories() {
   if (!db) return [];
   
   const result = await db.selectDistinct({ category: products.category }).from(products);
-  return result.map(r => r.category).filter(Boolean) as string[];
+  return result.map((r: any) => r.category).filter(Boolean) as string[];
 }
 
 // ==================== EMBEDDING OPERATIONS ====================
@@ -846,6 +890,78 @@ export async function getSessionInteractions(sessionId: string, limit = 50) {
     .limit(limit);
 }
 
+/**
+ * Get the top products by total interaction count across all sessions,
+ * weighted by interaction type. Used for the trending feed and as a
+ * cold-start fallback for session recommendations.
+ */
+export async function getTopInteractedProductIds(limit = 20): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+
+  const result = await db.execute(sql`
+    SELECT product_id, SUM(
+      CASE interaction_type
+        WHEN 'purchase' THEN 5
+        WHEN 'add_to_cart' THEN 4
+        WHEN 'search_click' THEN 3
+        WHEN 'click' THEN 2
+        WHEN 'view' THEN 1
+        ELSE 0
+      END
+    ) AS score
+    FROM interactions
+    WHERE created_at > now() - interval '30 days'
+    GROUP BY product_id
+    ORDER BY score DESC
+    LIMIT ${limit}
+  `);
+
+  const rows = (result as any).rows ?? (result as any) ?? [];
+  return rows
+    .map((r: any) => Number(r.product_id ?? r.productId))
+    .filter((n: number) => Number.isFinite(n));
+}
+
+/**
+ * Co-visitation lookup: given a set of seed product IDs, return other
+ * products that appeared in the SAME session as any of those seeds, sorted
+ * by frequency. Classic "users who viewed X also viewed Y".
+ */
+export async function getCoVisitedProducts(
+  seedProductIds: number[],
+  limit = 50,
+): Promise<Array<{ productId: number; sourceProductId: number | null; count: number }>> {
+  const db = await getDb();
+  if (!db || seedProductIds.length === 0) return [];
+
+  // We do a self-join on `interactions`: rows with the same session_id but a
+  // different product_id are considered co-visited. We then count how many
+  // distinct sessions co-visited each (seed, other) pair.
+  const result = await db.execute(sql`
+    SELECT
+      other.product_id AS product_id,
+      MAX(seed.product_id) AS source_product_id,
+      COUNT(DISTINCT seed.session_id)::int AS count
+    FROM interactions seed
+    JOIN interactions other
+      ON other.session_id = seed.session_id
+     AND other.product_id <> seed.product_id
+    WHERE seed.product_id IN (${sql.join(seedProductIds.map(id => sql`${id}`), sql`, `)})
+      AND other.product_id NOT IN (${sql.join(seedProductIds.map(id => sql`${id}`), sql`, `)})
+    GROUP BY other.product_id
+    ORDER BY count DESC
+    LIMIT ${limit}
+  `);
+
+  const rows = (result as any).rows ?? (result as any) ?? [];
+  return rows.map((r: any) => ({
+    productId: Number(r.product_id ?? r.productId),
+    sourceProductId: r.source_product_id != null ? Number(r.source_product_id) : null,
+    count: Number(r.count ?? 0),
+  }));
+}
+
 export async function getRecentlyViewedProducts(sessionId: string, limit = 10) {
   const db = await getDb();
   if (!db) return [];
@@ -859,9 +975,9 @@ export async function getRecentlyViewedProducts(sessionId: string, limit = 10) {
     .orderBy(desc(sessionInteractions.createdAt))
     .limit(limit);
   
-  const productIds = Array.from(new Set(interactions.map(i => i.productId)));
+  const productIds: number[] = Array.from(new Set(interactions.map((i: any) => i.productId as number)));
   if (productIds.length === 0) return [];
-  
+
   return getProductsByIds(productIds);
 }
 
@@ -961,7 +1077,7 @@ export async function getSearchLogsWithResults(limit = 100) {
     .limit(limit);
   
   // Fetch top results for each log
-  const logsWithResults = await Promise.all(logs.map(async (log) => {
+  const logsWithResults = await Promise.all(logs.map(async (log: any) => {
     const results = await db.select({
       productId: searchResultExplanations.productId,
       position: searchResultExplanations.position,
@@ -1088,7 +1204,106 @@ export async function getEvaluationMetricsBySearchLogId(searchLogId: number) {
 export async function getSearchLogById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
-  
+
   const result = await db.select().from(searchLogs).where(eq(searchLogs.id, id)).limit(1);
   return result[0];
+}
+
+// ==================== CHATBOT OPERATIONS ====================
+
+export async function getOrCreateConversation(
+  sessionId: string,
+  userId?: number,
+): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Try to find an existing open conversation for this session
+  const existing = await db
+    .select()
+    .from(chatConversations)
+    .where(eq(chatConversations.sessionId, sessionId))
+    .orderBy(desc(chatConversations.updatedAt))
+    .limit(1);
+
+  if (existing[0]) {
+    return existing[0].id;
+  }
+
+  const inserted = await db
+    .insert(chatConversations)
+    .values({ sessionId, userId, title: "New conversation" })
+    .returning({ id: chatConversations.id });
+
+  return inserted[0].id;
+}
+
+export async function saveChatMessage(
+  conversationId: number,
+  role: "user" | "assistant",
+  content: string,
+  productIds?: number[],
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.insert(chatMessages).values({
+    conversationId,
+    role,
+    content,
+    productIds: productIds && productIds.length > 0 ? productIds : null,
+  });
+
+  // Touch the conversation's updatedAt
+  await db
+    .update(chatConversations)
+    .set({ updatedAt: new Date() })
+    .where(eq(chatConversations.id, conversationId));
+}
+
+export async function getChatHistory(
+  conversationId: number,
+  limit = 20,
+) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db
+    .select()
+    .from(chatMessages)
+    .where(eq(chatMessages.conversationId, conversationId))
+    .orderBy(desc(chatMessages.createdAt))
+    .limit(limit);
+}
+
+export async function getUserCartItems(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const items = await db
+    .select({
+      cartItem: cartItems,
+      product: products,
+    })
+    .from(cartItems)
+    .innerJoin(products, eq(cartItems.productId, products.id))
+    .where(eq(cartItems.userId, userId));
+
+  return items;
+}
+
+export async function getUserWishlistItems(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const items = await db
+    .select({
+      wishlistItem: wishlistItems,
+      product: products,
+    })
+    .from(wishlistItems)
+    .innerJoin(products, eq(wishlistItems.productId, products.id))
+    .where(eq(wishlistItems.userId, userId));
+
+  return items;
 }

@@ -13,7 +13,6 @@ tokenizers>=0.13.0
 # PyTorch CPU-only (smaller image, no GPU needed for inference)
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.0.0
-torchaudio>=2.0.0
 
 # Data processing
 numpy<2

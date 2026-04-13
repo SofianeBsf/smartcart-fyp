@@ -209,10 +209,14 @@ const normalizeToolChoice = (
   return toolChoice;
 };
 
-const resolveApiUrl = () =>
-  ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0
-    ? `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/chat/completions`
-    : "http://localhost:11434/v1/chat/completions";
+const resolveApiUrl = () => {
+  const url = ENV.forgeApiUrl?.trim();
+  if (!url) return "http://localhost:11434/v1/chat/completions";
+  // If the URL already points at a chat/completions endpoint, use it as-is.
+  // Otherwise append the standard OpenAI path.
+  if (url.includes("/chat/completions")) return url;
+  return `${url.replace(/\/$/, "")}/v1/chat/completions`;
+};
 
 const assertApiKey = () => {
   if (!ENV.forgeApiKey) {
@@ -296,10 +300,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     payload.tool_choice = normalizedToolChoice;
   }
 
-  payload.max_tokens = 32768
-  payload.thinking = {
-    "budget_tokens": 128
-  }
+  payload.max_tokens = params.maxTokens ?? params.max_tokens ?? 32768;
 
   const normalizedResponseFormat = normalizeResponseFormat({
     responseFormat,

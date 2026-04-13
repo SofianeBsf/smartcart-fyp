@@ -1,13 +1,16 @@
-# SmartCart - Docker Compose Configuration
-# Microservices Architecture: Next.js + NestJS + FastAPI + PostgreSQL + Redis
-# As specified in PPRS document
+# SmartCart Docker Compose
+# Architecture: Express+tRPC+Vite (app) + FastAPI+BGE (ai-service) + PostgreSQL
+#
+# Usage:
+#   docker compose up --build        # start everything
+#   docker compose up -d             # start in background
+#   docker compose down              # stop everything
+#   docker compose down -v           # stop + delete database data
 
 services:
-  # ==================== DATABASE SERVICES ====================
-  
-  # PostgreSQL with pgvector extension for vector similarity search
+  # ── PostgreSQL (no row limits, unlike Neon free tier) ──────────────
   postgres:
-    image: pgvector/pgvector:pg16
+    image: postgres:16-alpine
     container_name: smartcart-postgres
     environment:
       POSTGRES_USER: smartcart
@@ -17,33 +20,15 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U smartcart"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks:
-      - smartcart-network
+      - smartcart-net
 
-  # Redis for caching and BullMQ job queue
-  redis:
-    image: redis:7-alpine
-    container_name: smartcart-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - smartcart-network
-
-  # ==================== AI SERVICE (FastAPI + Sentence-BERT) ====================
-  
+  # ── Python AI Service (FastAPI + BGE embeddings) ───────────────────
   ai-service:
     build:
       context: ./ai-service
@@ -53,91 +38,54 @@ services:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
+      - MODEL_NAME=BAAI/bge-small-en-v1.5
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()\""]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 10s
       timeout: 5s
-      retries: 12
-      start_period: 120s
+      retries: 15
+      start_period: 90s
     networks:
-      - smartcart-network
+      - smartcart-net
     deploy:
       resources:
         limits:
-          memory: 4G  # Sentence-BERT model requires significant memory
+          memory: 2G
 
-  # ==================== BACKEND ORCHESTRATOR (NestJS) ====================
-  
-  # Note: For this implementation, we're using the existing tRPC backend
-  # which connects to the FastAPI AI service. A full NestJS implementation
-  # would be a separate service.
-  
-  backend:
+  # ── Main App (Express + tRPC + Vite React frontend) ────────────────
+  app:
     build:
       context: .
-      dockerfile: Dockerfile.backend
-    container_name: smartcart-backend
-    ports:
-      - "3001:3001"
-    environment:
-      - NODE_ENV=production
-      - DATABASE_URL=postgresql://smartcart:smartcart_password@postgres:5432/smartcart
-      - REDIS_URL=redis://redis:6379
-      - AI_SERVICE_URL=http://ai-service:8000
-      - JWT_SECRET=${JWT_SECRET}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      ai-service:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    networks:
-      - smartcart-network
-
-  # ==================== FRONTEND (Next.js) ====================
-
-  frontend:
-    build:
-      context: .
-      dockerfile: Dockerfile.frontend
-    container_name: smartcart-frontend
+      dockerfile: Dockerfile
+    container_name: smartcart-app
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - NEXT_PUBLIC_API_URL=http://localhost:3001
       - DATABASE_URL=postgresql://smartcart:smartcart_password@postgres:5432/smartcart
-      - REDIS_URL=redis://redis:6379
       - AI_SERVICE_URL=http://ai-service:8000
-      - JWT_SECRET=${JWT_SECRET}
+      - JWT_SECRET=${JWT_SECRET:-smartcart-dev-secret-change-in-prod}
+      - OWNER_OPEN_ID=${OWNER_OPEN_ID:-dev-admin}
+      - BUILT_IN_FORGE_API_URL=${BUILT_IN_FORGE_API_URL:-}
+      - BUILT_IN_FORGE_API_KEY=${BUILT_IN_FORGE_API_KEY:-}
     depends_on:
-      backend:
+      postgres:
+        condition: service_healthy
+      ai-service:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
       interval: 30s
       timeout: 10s
       retries: 3
     networks:
-      - smartcart-network
-
-# ==================== VOLUMES ====================
+      - smartcart-net
 
 volumes:
   postgres_data:
     driver: local
-  redis_data:
-    driver: local
-
-# ==================== NETWORKS ====================
 
 networks:
-  smartcart-network:
+  smartcart-net:
     driver: bridge

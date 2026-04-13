@@ -5,8 +5,15 @@ import {
   logSearch,
   saveSearchExplanations,
   createEmbedding,
-  getProductById
+  getProductById,
+  getProductsByIds,
 } from "./db";
+import {
+  checkAIServiceHealth,
+  generateEmbedding as generateEmbeddingViaAI,
+  generateQueryEmbedding as generateQueryEmbeddingViaAI,
+  generateBatchEmbeddings as generateBatchEmbeddingsViaAI,
+} from "./aiService";
 import type { Product, RankingWeight } from "../drizzle/schema";
 
 /**
@@ -58,6 +65,19 @@ const SYNONYMS: { [key: string]: string[] } = {
 let idfDict: Map<string, number> = new Map();
 let vocabularySize = 0;
 let corpusBuilt = false;
+
+/**
+ * Reset the in-memory TF-IDF corpus cache. Called from the admin
+ * "Clear Search Cache" action so the next search rebuilds IDFs from the
+ * latest catalog.
+ */
+export function resetCorpusCache(): { entries: number } {
+  const entries = idfDict.size;
+  idfDict = new Map();
+  vocabularySize = 0;
+  corpusBuilt = false;
+  return { entries };
+}
 
 /**
  * Tokenize text for TF-IDF calculations
@@ -156,11 +176,24 @@ function generateTFIDFVector(text: string, targetDim: number = EMBEDDING_DIMENSI
 }
 
 /**
- * Generate embedding for a text using TF-IDF with synonym expansion.
- * This creates consistent embeddings that match the product embeddings format.
+ * Generate a query embedding by calling the Python AI service.
+ *
+ * This MUST use the /embed/query endpoint, which applies the BGE query prefix
+ * ("Represent this sentence for searching relevant passages: "). BGE is an
+ * asymmetric retrieval model — passing the raw query through /embed (the
+ * passage endpoint) silently degrades retrieval quality because the query
+ * vector ends up in the wrong subspace. If the AI service is unavailable we
+ * throw instead of silently returning a fake vector.
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
-  return generateTFIDFVector(text, EMBEDDING_DIMENSION);
+  const healthy = await checkAIServiceHealth();
+  if (!healthy) {
+    throw new Error(
+      "[SemanticSearch] AI service is not reachable — cannot generate query embedding. " +
+        "Start the Python service (ai-service/main.py) and retry."
+    );
+  }
+  return generateQueryEmbeddingViaAI(text);
 }
 
 /**
@@ -409,17 +442,28 @@ export async function semanticSearch(
   const minPriceInSet = Math.min(...prices, 0);
   const maxPriceInSet = Math.max(...prices, 1);
 
-  // Score all products
+  // Score all products.
+  //
+  // IMPORTANT: We do NOT apply a keyword boost here anymore. The previous
+  // implementation added `matchedTerms/totalTerms * 0.5` to the semantic score,
+  // which made α unable to reflect *pure* semantic similarity and let
+  // keyword-matching products outrank semantically-similar ones for no reason.
+  // Lexical overlap is already implicitly captured in the BGE embedding.
   let scoredProducts = productsWithEmbeddings.map(({ product, embedding }) => {
-    // Calculate individual scores. If an embedding is missing, generate a deterministic fallback embedding
-    // from product text so search still works even before precomputing vectors.
-    const fallbackProductEmbedding = generateDeterministicEmbedding(
-      `${product.title} ${product.description || ""} ${product.category || ""}`
-    );
-    const semanticScore = cosineSimilarity(
-      queryEmbedding,
-      (embedding as number[] | null) ?? fallbackProductEmbedding
-    );
+    // Semantic score: cosine similarity between query and product embeddings
+    // from the same BGE model. If a product has no embedding stored yet, we
+    // flag it as a miss (semantic = 0) rather than inventing a TF-IDF vector,
+    // which would sit in a completely different space from the BGE query.
+    let rawSemantic = 0;
+    if (Array.isArray(embedding) && embedding.length === queryEmbedding.length) {
+      rawSemantic = cosineSimilarity(queryEmbedding, embedding as number[]);
+    }
+    // Clamp to [0,1]: BGE embeddings are unit-normalized and in practice
+    // produce non-negative cosines for semantically-related text, but we
+    // clip negatives rather than remap [-1,1] → [0,1] (which would compress
+    // the discriminative range and make ranking collapse into the tie-breakers).
+    const semanticScore = Math.max(0, Math.min(1, rawSemantic));
+
     const ratingScore = normalizeRatingScore(product.rating ? Number(product.rating) : null);
     const priceScore = normalizePriceScore(
       Number(product.price) || 0,
@@ -429,19 +473,14 @@ export async function semanticSearch(
     const stockScore = normalizeStockScore(product.availability, product.stockQuantity);
     const recencyScore = normalizeRecencyScore(product.createdAt);
 
-    // Extract matched terms first (needed for keyword boost)
+    // Lexical overlap is still tracked for the explanation UI, but it is NOT
+    // added to the final score.
     const productText = `${product.title} ${product.description || ""} ${product.category || ""}`;
     const matchedTerms = extractMatchedTerms(query, productText);
-    
-    // Calculate keyword match boost (0 to 0.5 based on matched terms)
-    const queryTerms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2);
-    const keywordBoost = queryTerms.length > 0 
-      ? (matchedTerms.length / queryTerms.length) * 0.5 
-      : 0;
 
-    // Calculate weighted final score with keyword boost
-    const finalScore = 
-      alpha * Math.max(0, semanticScore + keywordBoost) +
+    // Weighted final score: pure linear combination of the 5 normalized signals.
+    const finalScore =
+      alpha * semanticScore +
       beta * ratingScore +
       gamma * priceScore +
       delta * stockScore +
@@ -451,7 +490,7 @@ export async function semanticSearch(
       product,
       scores: {
         final: finalScore,
-        semantic: Math.max(0, semanticScore),
+        semantic: semanticScore,
         rating: ratingScore,
         price: priceScore,
         stock: stockScore,
@@ -531,7 +570,37 @@ export async function semanticSearch(
 }
 
 /**
+ * Build the text passed to the embedding model for a single product.
+ * Keep this stable — the embeddings stored in the DB must have been produced
+ * from the same template so that queries and products share a representation.
+ */
+function buildProductText(product: {
+  title?: string | null;
+  description?: string | null;
+  category?: string | null;
+  subcategory?: string | null;
+  brand?: string | null;
+  features?: string[] | null;
+}): string {
+  return [
+    product.title,
+    product.description,
+    product.category,
+    product.subcategory,
+    product.brand,
+    ...(product.features || []),
+  ].filter(Boolean).join(" ");
+}
+
+/**
  * Generate embedding for a product and store it.
+ *
+ * This calls the Python AI service (Sentence-BERT / BGE) to get a REAL
+ * neural embedding. The previous implementation secretly fell back to a
+ * TF-IDF hash vector, which is NOT comparable to the query embeddings
+ * produced by the AI service — that silently broke semantic search for
+ * common queries like "shoes" or "gaming laptop" because the product
+ * vectors and query vectors lived in different spaces.
  */
 export async function generateProductEmbedding(productId: number): Promise<boolean> {
   try {
@@ -541,17 +610,20 @@ export async function generateProductEmbedding(productId: number): Promise<boole
       return false;
     }
 
-    // Combine product text for embedding
-    const textToEmbed = [
-      product.title,
-      product.description,
-      product.category,
-      product.subcategory,
-      product.brand,
-      ...(product.features || []),
-    ].filter(Boolean).join(" ");
+    const textToEmbed = buildProductText(product);
 
-    const embedding = await generateEmbedding(textToEmbed);
+    // Hard dependency on the AI service. If it's down we refuse to write
+    // fake vectors into the DB so a future real call isn't polluted.
+    const healthy = await checkAIServiceHealth();
+    if (!healthy) {
+      console.error(
+        "[SemanticSearch] AI service unavailable — refusing to write a non-BGE vector for product",
+        productId,
+      );
+      return false;
+    }
+
+    const embedding = await generateEmbeddingViaAI(textToEmbed);
 
     await createEmbedding({
       productId,
@@ -568,30 +640,81 @@ export async function generateProductEmbedding(productId: number): Promise<boole
 
 /**
  * Batch generate embeddings for multiple products.
+ *
+ * Uses the Python /embed/batch endpoint so a full regeneration is fast
+ * (one HTTP call per chunk instead of one per product). Chunks are sized
+ * conservatively to stay well under typical request-body limits.
  */
 export async function batchGenerateEmbeddings(
   productIds: number[],
-  onProgress?: (completed: number, total: number) => void
+  onProgress?: (completed: number, total: number) => void,
 ): Promise<{ success: number; failed: number }> {
+  if (productIds.length === 0) return { success: 0, failed: 0 };
+
+  const healthy = await checkAIServiceHealth();
+  if (!healthy) {
+    console.error("[SemanticSearch] AI service unavailable — aborting batch embedding");
+    return { success: 0, failed: productIds.length };
+  }
+
+  const CHUNK_SIZE = 32;
   let success = 0;
   let failed = 0;
+  let completed = 0;
 
-  for (let i = 0; i < productIds.length; i++) {
-    const result = await generateProductEmbedding(productIds[i]);
-    if (result) {
-      success++;
-    } else {
-      failed++;
-    }
-    
-    if (onProgress) {
-      onProgress(i + 1, productIds.length);
+  for (let offset = 0; offset < productIds.length; offset += CHUNK_SIZE) {
+    const chunkIds = productIds.slice(offset, offset + CHUNK_SIZE);
+    try {
+      const products = await getProductsByIds(chunkIds);
+      // Preserve order: map id → product so missing products become empty strings
+      const byId = new Map(products.map(p => [p.id, p]));
+      const texts = chunkIds.map(id => {
+        const p = byId.get(id);
+        return p ? buildProductText(p) : "";
+      });
+
+      // Skip empty texts (missing products) up front
+      const toEmbedIndexes = texts
+        .map((t, i) => (t.trim().length > 0 ? i : -1))
+        .filter(i => i >= 0);
+      if (toEmbedIndexes.length === 0) {
+        failed += chunkIds.length;
+        completed += chunkIds.length;
+        onProgress?.(completed, productIds.length);
+        continue;
+      }
+
+      const filteredTexts = toEmbedIndexes.map(i => texts[i]);
+      const embeddings = await generateBatchEmbeddingsViaAI(filteredTexts);
+
+      // Persist each one
+      for (let k = 0; k < toEmbedIndexes.length; k++) {
+        const localIdx = toEmbedIndexes[k];
+        const productId = chunkIds[localIdx];
+        try {
+          await createEmbedding({
+            productId,
+            embedding: embeddings[k],
+            textUsed: filteredTexts[k].slice(0, 1000),
+          });
+          success++;
+        } catch (e) {
+          console.error("[SemanticSearch] Failed to store embedding for", productId, e);
+          failed++;
+        }
+      }
+      // Count the skipped (missing product) rows as failures
+      failed += chunkIds.length - toEmbedIndexes.length;
+    } catch (error) {
+      console.error(
+        "[SemanticSearch] Batch embedding chunk failed, marking chunk as failed:",
+        error,
+      );
+      failed += chunkIds.length;
     }
 
-    // Small delay to avoid rate limiting
-    if (i < productIds.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
+    completed += chunkIds.length;
+    onProgress?.(completed, productIds.length);
   }
 
   return { success, failed };

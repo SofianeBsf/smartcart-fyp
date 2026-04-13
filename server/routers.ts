@@ -40,14 +40,17 @@ import {
   getRecentUploadJobs,
   getEmbeddingCount,
   createEmbedding,
+  getAllProductsWithOptionalEmbeddings,
 } from "./db";
-import { semanticSearch, generateProductEmbedding, batchGenerateEmbeddings } from "./semanticSearch";
-import { 
-  checkAIServiceHealth, 
+import { semanticSearch, generateProductEmbedding, batchGenerateEmbeddings, resetCorpusCache } from "./semanticSearch";
+import {
+  checkAIServiceHealth,
   generateEmbedding as generateEmbeddingViaAI,
   generateBatchEmbeddings as generateBatchEmbeddingsViaAI,
   semanticSearchViaAI,
   findSimilarProductsViaAI,
+  clearAIServiceCache,
+  checkEmbeddingHealth,
   toAIProduct,
   fromDBWeights,
   type Product as AIProduct,
@@ -55,6 +58,7 @@ import {
 import { getSessionRecommendations, getSimilarProducts, getTrendingProducts } from "./recommendations";
 import { evaluateSearchQuery, calculateAllMetrics, generateAutoRelevanceJudgments, type SearchResult } from "./irMetrics";
 import { notifyOwner } from "./_core/notification";
+import { handleChatMessage } from "./chatbot";
 
 // Session cookie name for anonymous tracking
 const SESSION_COOKIE = "smartcart_session";
@@ -97,6 +101,28 @@ export const appRouter = router({
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
       return { success: true } as const;
     }),
+  }),
+
+  // ==================== CHATBOT ====================
+  chat: router({
+    send: publicProcedure
+      .input(
+        z.object({
+          message: z.string().min(1).max(2000),
+          conversationId: z.number().optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const sessionId = getOrCreateSessionId(ctx as any);
+        const userId = ctx.user?.id;
+        const result = await handleChatMessage({
+          message: input.message,
+          sessionId,
+          userId,
+          conversationId: input.conversationId,
+        });
+        return result;
+      }),
   }),
 
   // ==================== PRODUCT ROUTES ====================
@@ -182,12 +208,15 @@ export const appRouter = router({
         
         if (aiServiceAvailable) {
           try {
-            // Get all products with embeddings from database
-            const products = await getAllProducts(1000, 0);
+            // Get all products WITH embeddings from database (LEFT JOIN)
+            const productsWithEmbeddings = await getAllProductsWithOptionalEmbeddings(1000, 0);
             const weights = await getActiveRankingWeights();
-            
-            // Convert products to AI service format
-            const aiProducts: AIProduct[] = products.map(p => toAIProduct(p));
+
+            // Convert products to AI service format, merging embedding data
+            const aiProducts: AIProduct[] = productsWithEmbeddings.map(row => toAIProduct({
+              ...row.product,
+              embedding: row.embedding ? (typeof row.embedding === 'string' ? JSON.parse(row.embedding) : row.embedding) : null,
+            }));
             
             // Call FastAPI AI service for semantic search
             const aiResult = await semanticSearchViaAI(
@@ -221,7 +250,7 @@ export const appRouter = router({
                   title: r.product.title,
                   description: r.product.description,
                   category: r.product.category,
-                  imageUrl: products.find(p => p.id === r.product.id)?.imageUrl || null,
+                  imageUrl: productsWithEmbeddings.find(p => p.product.id === r.product.id)?.product.imageUrl || null,
                   price: r.product.price?.toString() || null,
                   rating: r.product.rating?.toString() || null,
                   reviewCount: r.product.review_count || 0,
@@ -280,68 +309,82 @@ export const appRouter = router({
           }
         }
         
-        // Fallback to local semantic search
-        const result = await semanticSearch(input.query, {
-          limit: input.limit,
-          minScore: input.minScore,
-          category: input.category,
-          minPrice: input.minPrice,
-          maxPrice: input.maxPrice,
-          inStockOnly: input.inStockOnly,
-          sessionId,
-        });
-
-        if (result.results.length === 0) {
-          const keywordProducts = await searchProductsByKeyword(input.query, input.limit);
-
-          const filteredKeywordProducts = keywordProducts.filter((product) => {
-            const productPrice = Number(product.price) || 0;
-
-            if (input.category && product.category?.toLowerCase() !== input.category.toLowerCase()) {
-              return false;
-            }
-            if (input.minPrice !== undefined && productPrice < input.minPrice) {
-              return false;
-            }
-            if (input.maxPrice !== undefined && productPrice > input.maxPrice) {
-              return false;
-            }
-            if (input.inStockOnly && product.availability === "out_of_stock") {
-              return false;
-            }
-
-            return true;
+        // Fallback to local semantic search.
+        // This CAN throw if the AI service is completely unreachable, because
+        // generateEmbedding() (for the query) now hard-requires the Python
+        // service. In that case we degrade further to pure keyword search.
+        try {
+          const result = await semanticSearch(input.query, {
+            limit: input.limit,
+            minScore: input.minScore,
+            category: input.category,
+            minPrice: input.minPrice,
+            maxPrice: input.maxPrice,
+            inStockOnly: input.inStockOnly,
+            sessionId,
           });
 
-          return {
-            results: filteredKeywordProducts.map((product, index) => ({
-              product,
-              scores: {
-                final: 0.5,
-                semantic: 0,
-                rating: product.rating ? Number(product.rating) / 5 : 0.5,
-                price: 0.5,
-                stock: product.availability === "out_of_stock" ? 0 : 1,
-                recency: 0.5,
-              },
-              matchedTerms: [],
-              explanation: "Keyword match fallback",
-              position: index + 1,
-            })),
-            searchLogId: result.searchLogId,
-            responseTimeMs: result.responseTimeMs,
-            query: input.query,
-            aiServiceUsed: false,
-            fallbackUsed: "keyword",
-          };
+          if (result.results.length > 0) {
+            return {
+              results: result.results,
+              searchLogId: result.searchLogId,
+              responseTimeMs: result.responseTimeMs,
+              query: input.query,
+              aiServiceUsed: false,
+            };
+          }
+          // 0 semantic results → fall through to keyword search below
+        } catch (semanticError) {
+          console.warn(
+            "[Search] Local semantic search unavailable (AI service down?), using keyword fallback:",
+            semanticError instanceof Error ? semanticError.message : semanticError,
+          );
+          // Fall through to keyword search
         }
 
+        // Final fallback: pure keyword/title search (no embeddings needed)
+        const keywordStartTime = Date.now();
+        const keywordProducts = await searchProductsByKeyword(input.query, input.limit);
+
+        const filteredKeywordProducts = keywordProducts.filter((product) => {
+          const productPrice = Number(product.price) || 0;
+
+          if (input.category && product.category?.toLowerCase() !== input.category.toLowerCase()) {
+            return false;
+          }
+          if (input.minPrice !== undefined && productPrice < input.minPrice) {
+            return false;
+          }
+          if (input.maxPrice !== undefined && productPrice > input.maxPrice) {
+            return false;
+          }
+          if (input.inStockOnly && product.availability === "out_of_stock") {
+            return false;
+          }
+
+          return true;
+        });
+
         return {
-          results: result.results,
-          searchLogId: result.searchLogId,
-          responseTimeMs: result.responseTimeMs,
+          results: filteredKeywordProducts.map((product, index) => ({
+            product,
+            scores: {
+              final: 0.5,
+              semantic: 0,
+              rating: product.rating ? Number(product.rating) / 5 : 0.5,
+              price: 0.5,
+              stock: product.availability === "out_of_stock" ? 0 : 1,
+              recency: 0.5,
+            },
+            matchedTerms: [],
+            explanation: "Keyword match (AI service offline)",
+            position: index + 1,
+          })),
+          searchLogId: 0,
+          responseTimeMs: Date.now() - keywordStartTime,
           query: input.query,
           aiServiceUsed: false,
+          fallbackUsed: "keyword",
         };
       }),
     
@@ -461,9 +504,59 @@ export const appRouter = router({
         }))
         .mutation(async ({ input }) => {
           const { id, ...weights } = input;
-          await updateRankingWeights(id, weights);
+
+          // Compute the resulting sum (use existing DB values for any fields
+          // the client didn't supply) and reject > 1 ± 0.01 tolerance.
+          const current = await getActiveRankingWeights();
+          const effective = {
+            alpha: parseFloat(weights.alpha ?? current.alpha),
+            beta: parseFloat(weights.beta ?? current.beta),
+            gamma: parseFloat(weights.gamma ?? current.gamma),
+            delta: parseFloat(weights.delta ?? current.delta),
+            epsilon: parseFloat(weights.epsilon ?? current.epsilon),
+          };
+
+          for (const [key, val] of Object.entries(effective)) {
+            if (!Number.isFinite(val) || val < 0 || val > 1) {
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: `Weight ${key} must be between 0 and 1 (got ${val})`,
+              });
+            }
+          }
+
+          const total = Object.values(effective).reduce((a, b) => a + b, 0);
+          if (total > 1 + 0.01) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `Weights sum to ${total.toFixed(3)} — must not exceed 1.00`,
+            });
+          }
+          if (total < 1 - 0.01) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `Weights sum to ${total.toFixed(3)} — must equal 1.00`,
+            });
+          }
+
+          await updateRankingWeights(id, { ...weights, updatedAt: new Date() });
           return { success: true };
         }),
+    }),
+
+    // System maintenance actions (cache flush, etc.)
+    system: router({
+      clearSearchCache: adminProcedure.mutation(async () => {
+        const local = resetCorpusCache();
+        const remote = await clearAIServiceCache();
+        return {
+          success: true,
+          clearedEntries: local.entries + remote.entries,
+          localCacheCleared: true,
+          aiServiceCleared: remote.cleared,
+          aiServiceEntries: remote.entries,
+        };
+      }),
     }),
 
     // Product management
@@ -534,6 +627,51 @@ export const appRouter = router({
           const success = await generateProductEmbedding(input.productId);
           return { success };
         }),
+
+      // Sanity-check what's actually in the product_embeddings table. Picks
+      // a small sample, sends the text+stored vector to Python, and reports
+      // whether the stored vectors actually come from the current live model.
+      // Used by the admin dashboard to diagnose "regenerate succeeded but
+      // search still looks wrong" situations.
+      embeddingHealth: adminProcedure.query(async () => {
+        const sampleRows = await getAllProductsWithOptionalEmbeddings(10, 0);
+        const samples = sampleRows
+          .filter(row => Array.isArray(row.embedding) && (row.embedding as number[]).length > 0)
+          .map(row => ({
+            id: row.product.id,
+            text: [
+              row.product.title,
+              row.product.description,
+              row.product.category,
+              row.product.subcategory,
+              row.product.brand,
+              ...((row.product.features as string[] | null) || []),
+            ].filter(Boolean).join(" "),
+            embedding: row.embedding as number[],
+          }));
+        if (samples.length === 0) {
+          return {
+            model_name: "n/a",
+            verdict: "broken" as const,
+            ok_count: 0,
+            total: 0,
+            samples: [],
+            hint: "No embeddings in product_embeddings. Click 'Regenerate All Embeddings'.",
+          };
+        }
+        const report = await checkEmbeddingHealth(samples);
+        return {
+          ...report,
+          hint:
+            report.verdict === "healthy"
+              ? "Stored embeddings match the live BGE model."
+              : report.verdict === "broken"
+              ? "Stored embeddings are NOT from the current BGE model (likely stale TF-IDF). Click 'Regenerate All Embeddings' while the Python service is running."
+              : report.verdict === "mixed"
+              ? "Some products have correct embeddings, others don't. Regenerate to fix the stragglers."
+              : "AI service unreachable. Start the Python service and retry.",
+        };
+      }),
 
       generateAllEmbeddings: adminProcedure.mutation(async () => {
         const products = await getAllProducts(10000, 0);

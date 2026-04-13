@@ -25,6 +25,7 @@ export default function Home() {
 
   const { data: featuredProducts, isLoading: featuredLoading } = trpc.products.featured.useQuery({ limit: 8 });
   const { data: trendingProducts, isLoading: trendingLoading } = trpc.recommendations.trending.useQuery({ limit: 6 });
+  const { data: sessionRecs, isLoading: sessionRecsLoading } = trpc.recommendations.forSession.useQuery({ limit: 6 });
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -186,6 +187,51 @@ export default function Home() {
           )}
         </div>
       </section>
+
+      {/* Session-Based Recommendations */}
+      {sessionRecs && sessionRecs.length > 0 && (
+        <section className="py-16 border-t">
+          <div className="container">
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h2 className="text-2xl font-bold flex items-center gap-2">
+                  <Sparkles className="w-6 h-6 text-primary" />
+                  Recommended for You
+                </h2>
+                <p className="text-muted-foreground mt-1">
+                  Based on your recent browsing session
+                </p>
+              </div>
+            </div>
+
+            {sessionRecsLoading ? (
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <Card key={i} className="overflow-hidden">
+                    <Skeleton className="aspect-square" />
+                    <CardContent className="p-3">
+                      <Skeleton className="h-3 w-3/4 mb-1" />
+                      <Skeleton className="h-3 w-1/2" />
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                {sessionRecs.map((item) => (
+                  <ProductCard
+                    key={item.product.id}
+                    product={item.product}
+                    compact
+                    showExplanation
+                    explanation={item.reason}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Trending Section */}
       <section className="py-16 bg-muted/30">

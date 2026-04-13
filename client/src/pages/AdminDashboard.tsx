@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
@@ -235,6 +235,9 @@ function OverviewTab() {
         ))}
       </div>
 
+      {/* Embedding Health */}
+      <EmbeddingHealthCard />
+
       {/* Quick Actions */}
       <Card>
         <CardHeader>
@@ -266,19 +269,93 @@ function OverviewTab() {
   );
 }
 
-function QuickActionButton({ 
-  icon: Icon, 
-  title, 
-  description, 
-  action 
-}: { 
-  icon: React.ElementType; 
-  title: string; 
-  description: string; 
+function EmbeddingHealthCard() {
+  const { data, isLoading, refetch, isFetching } =
+    trpc.admin.products.embeddingHealth.useQuery(undefined, {
+      refetchOnWindowFocus: false,
+    });
+
+  const verdict = data?.verdict ?? "unknown";
+  const verdictColor =
+    verdict === "healthy"
+      ? "text-green-600"
+      : verdict === "broken"
+      ? "text-red-600"
+      : verdict === "mixed"
+      ? "text-yellow-600"
+      : "text-muted-foreground";
+
+  const verdictLabel =
+    verdict === "healthy"
+      ? "Healthy — embeddings match the live model"
+      : verdict === "broken"
+      ? "Broken — stale or wrong-model vectors in DB"
+      : verdict === "mixed"
+      ? "Mixed — some embeddings are stale"
+      : "Unknown — AI service unreachable";
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <div>
+          <CardTitle>Embedding Health</CardTitle>
+          <CardDescription>
+            Sanity check that product_embeddings contains vectors from the current model.
+          </CardDescription>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => refetch()}
+          disabled={isFetching}
+        >
+          {isFetching ? <Loader2 className="w-4 h-4 animate-spin" /> : "Re-check"}
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">Running diagnostic…</p>
+        ) : (
+          <div className="space-y-2 text-sm">
+            <div className={`font-medium ${verdictColor}`}>{verdictLabel}</div>
+            <div className="text-muted-foreground">
+              Model: <code>{data?.model_name ?? "?"}</code> •{" "}
+              {data?.ok_count ?? 0}/{data?.total ?? 0} samples match the live model
+            </div>
+            {data?.hint && (
+              <div className="text-muted-foreground italic">{data.hint}</div>
+            )}
+            {data?.samples && data.samples.length > 0 && (
+              <div className="pt-2 text-xs font-mono space-y-0.5">
+                {data.samples.map((s: any) => (
+                  <div key={s.id}>
+                    #{s.id} • cos={s.cosine_to_fresh ?? "n/a"} • {s.status}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function QuickActionButton({
+  icon: Icon,
+  title,
+  description,
+  action
+}: {
+  icon: React.ElementType;
+  title: string;
+  description: string;
   action: string;
 }) {
   const [isLoading, setIsLoading] = useState(false);
   const generateEmbeddings = trpc.admin.products.generateAllEmbeddings.useMutation();
+  const clearCache = trpc.admin.system.clearSearchCache.useMutation();
+  const calculateMetrics = trpc.admin.stats.calculateIRMetrics.useMutation();
 
   const handleClick = async () => {
     setIsLoading(true);
@@ -286,11 +363,29 @@ function QuickActionButton({
       if (action === "embeddings") {
         const result = await generateEmbeddings.mutateAsync();
         toast.success(`Generated ${result.success} embeddings (${result.failed} failed)`);
+      } else if (action === "cache") {
+        const result = await clearCache.mutateAsync();
+        toast.success(
+          `Cleared ${result.clearedEntries ?? 0} cache entries` +
+            (result.aiServiceCleared ? " (AI service cache flushed)" : ""),
+        );
+      } else if (action === "metrics") {
+        const result = await calculateMetrics.mutateAsync();
+        if (result.queryCount === 0) {
+          toast.info(result.message || "No search logs available yet");
+        } else {
+          toast.success(
+            `nDCG@10: ${result.avgNdcg} • Recall@10: ${result.avgRecall} • ` +
+              `Precision@10: ${result.avgPrecision} • MRR: ${result.avgMrr} ` +
+              `(${result.queryCount} queries)`,
+            { duration: 6000 },
+          );
+        }
       } else {
-        toast.info("Feature coming soon");
+        toast.info("Unknown action");
       }
     } catch (error) {
-      toast.error("Action failed");
+      toast.error(error instanceof Error ? error.message : "Action failed");
     } finally {
       setIsLoading(false);
     }
@@ -593,13 +688,16 @@ function CatalogTab() {
 }
 
 function WeightsTab() {
+  const utils = trpc.useUtils();
   const { data: weights, isLoading } = trpc.admin.weights.get.useQuery();
   const updateWeights = trpc.admin.weights.update.useMutation({
     onSuccess: () => {
       toast.success("Weights updated successfully");
+      // Invalidate so the next query refetches and useEffect re-syncs local state
+      utils.admin.weights.get.invalidate();
     },
-    onError: () => {
-      toast.error("Failed to update weights");
+    onError: (error) => {
+      toast.error(error.message || "Failed to update weights");
     },
   });
 
@@ -611,8 +709,11 @@ function WeightsTab() {
     epsilon: 0.05,
   });
 
-  // Update local state when weights load
-  useState(() => {
+  // Sync local state when weights load from server.
+  // (Previously this used useState(() => ...) which only fires on first mount
+  //  BEFORE the query resolves, so the UI would snap back to defaults on every
+  //  refresh and saves looked like they hadn't persisted.)
+  useEffect(() => {
     if (weights) {
       setLocalWeights({
         alpha: parseFloat(weights.alpha),
@@ -622,11 +723,25 @@ function WeightsTab() {
         epsilon: parseFloat(weights.epsilon),
       });
     }
-  });
+  }, [weights]);
+
+  const totalWeight = Object.values(localWeights).reduce((a, b) => a + b, 0);
+  // Allow a tiny floating-point tolerance (0.01) around 1.0.
+  const isOverBudget = totalWeight > 1 + 0.01;
+  const isUnderBudget = totalWeight < 1 - 0.01;
+  const isValid = !isOverBudget && !isUnderBudget;
 
   const handleSave = () => {
     if (!weights) return;
-    
+    if (isOverBudget) {
+      toast.error(`Weights sum to ${totalWeight.toFixed(2)} — must not exceed 1.00`);
+      return;
+    }
+    if (isUnderBudget) {
+      toast.error(`Weights sum to ${totalWeight.toFixed(2)} — must equal 1.00`);
+      return;
+    }
+
     updateWeights.mutate({
       id: weights.id,
       alpha: localWeights.alpha.toFixed(3),
@@ -637,7 +752,16 @@ function WeightsTab() {
     });
   };
 
-  const totalWeight = Object.values(localWeights).reduce((a, b) => a + b, 0);
+  const handleNormalize = () => {
+    if (totalWeight <= 0) return;
+    setLocalWeights(prev => ({
+      alpha: prev.alpha / totalWeight,
+      beta: prev.beta / totalWeight,
+      gamma: prev.gamma / totalWeight,
+      delta: prev.delta / totalWeight,
+      epsilon: prev.epsilon / totalWeight,
+    }));
+  };
 
   const weightConfig = [
     {
@@ -742,37 +866,50 @@ function WeightsTab() {
             <div>
               <p className="font-medium">Total Weight</p>
               <p className="text-sm text-muted-foreground">
-                Should sum to 1.0 for normalized scoring
+                Must sum to exactly 1.00 for normalized scoring
               </p>
             </div>
             <div className="text-right">
               <span className={`text-2xl font-bold ${
-                Math.abs(totalWeight - 1) < 0.01 ? "text-green-600" : "text-yellow-600"
+                isValid ? "text-green-600" : isOverBudget ? "text-red-600" : "text-yellow-600"
               }`}>
                 {totalWeight.toFixed(2)}
               </span>
-              {Math.abs(totalWeight - 1) >= 0.01 && (
+              {isOverBudget && (
+                <p className="text-xs text-red-600">
+                  Exceeds 1.00 — reduce some weights
+                </p>
+              )}
+              {isUnderBudget && (
                 <p className="text-xs text-yellow-600">
-                  Weights don't sum to 1.0
+                  Under 1.00 — increase some weights
                 </p>
               )}
             </div>
           </div>
 
-          <Button 
-            onClick={handleSave} 
-            className="w-full"
-            disabled={updateWeights.isPending}
-          >
-            {updateWeights.isPending ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Saving...
-              </>
-            ) : (
-              "Save Weights"
-            )}
-          </Button>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Button
+              variant="outline"
+              onClick={handleNormalize}
+              disabled={updateWeights.isPending || totalWeight <= 0 || isValid}
+            >
+              Auto-normalize to 1.00
+            </Button>
+            <Button
+              onClick={handleSave}
+              disabled={updateWeights.isPending || !isValid}
+            >
+              {updateWeights.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                "Save Weights"
+              )}
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>

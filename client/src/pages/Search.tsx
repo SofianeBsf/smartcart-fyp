@@ -298,38 +298,42 @@ export default function Search() {
               </div>
             ) : sortedResults.length > 0 ? (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                {sortedResults.map((result) => (
-                  <div key={result.product.id} className="animate-fade-in">
-                    <ProductCard
-                      product={result.product}
-                      showExplanation
-                      explanation={result.explanation}
-                      position={'rank' in result ? result.rank : ('position' in result ? result.position : 0)}
-                    />
-                    
-                    {/* Score Breakdown (Collapsible) */}
-                    <Collapsible className="mt-2">
-                      <CollapsibleTrigger asChild>
-                        <Button variant="ghost" size="sm" className="w-full text-xs">
-                          <ChevronDown className="w-3 h-3 mr-1" />
-                          View Score Breakdown
-                        </Button>
-                      </CollapsibleTrigger>
-                      <CollapsibleContent>
-                        <ScoreBreakdown 
-                          scores={'scoreBreakdown' in result ? result.scoreBreakdown : ('scores' in result ? {
-                            semanticScore: result.scores.semantic,
-                            ratingScore: result.scores.rating,
-                            priceScore: result.scores.price,
-                            stockScore: result.scores.stock,
-                            recencyScore: result.scores.recency,
-                          } : undefined)} 
-                          matchedTerms={result.matchedTerms} 
-                        />
-                      </CollapsibleContent>
-                    </Collapsible>
-                  </div>
-                ))}
+                {sortedResults.map((result) => {
+                  const scores = 'scoreBreakdown' in result ? result.scoreBreakdown : ('scores' in result ? {
+                    semanticScore: result.scores.semantic,
+                    ratingScore: result.scores.rating,
+                    priceScore: result.scores.price,
+                    stockScore: result.scores.stock,
+                    recencyScore: result.scores.recency,
+                  } : undefined);
+
+                  return (
+                    <div key={result.product.id} className="animate-fade-in flex flex-col">
+                      <ProductCard
+                        product={result.product}
+                        showExplanation
+                        explanation={result.explanation}
+                        position={'rank' in result ? result.rank : ('position' in result ? result.position : 0)}
+                      />
+
+                      {/* Score Breakdown (Collapsible) */}
+                      <Collapsible defaultOpen={false} className="mt-2">
+                        <CollapsibleTrigger asChild>
+                          <Button variant="ghost" size="sm" className="w-full text-xs">
+                            <ChevronDown className="w-3 h-3 mr-1" />
+                            View Score Breakdown
+                          </Button>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="overflow-hidden">
+                          <ScoreBreakdown
+                            scores={scores}
+                            matchedTerms={result.matchedTerms}
+                          />
+                        </CollapsibleContent>
+                      </Collapsible>
+                    </div>
+                  );
+                })}
               </div>
             ) : submittedQuery ? (
               <Card className="p-12 text-center">

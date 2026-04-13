@@ -98,7 +98,8 @@ export async function checkAIServiceHealth(): Promise<boolean> {
 }
 
 /**
- * Generate embedding for a single text using Sentence-BERT
+ * Generate embedding for a PASSAGE / product text (no query prefix).
+ * Use this when embedding things that will be indexed, not searched.
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
   try {
@@ -107,6 +108,25 @@ export async function generateEmbedding(text: string): Promise<number[]> {
   } catch (error) {
     console.error("[AIService] Error generating embedding:", error);
     throw new Error("Failed to generate embedding from AI service");
+  }
+}
+
+/**
+ * Generate embedding for a SEARCH QUERY.
+ *
+ * BGE is an asymmetric retrieval model: queries need a prefix
+ * ("Represent this sentence for searching relevant passages: ") so the vector
+ * lands in the correct space when compared against passage vectors. Calling
+ * /embed (the passage endpoint) for queries silently tanks retrieval quality.
+ * Always route user queries through here.
+ */
+export async function generateQueryEmbedding(text: string): Promise<number[]> {
+  try {
+    const response = await aiClient.post<EmbeddingResponse>("/embed/query", { text });
+    return response.data.embedding;
+  } catch (error) {
+    console.error("[AIService] Error generating query embedding:", error);
+    throw new Error("Failed to generate query embedding from AI service");
   }
 }
 
@@ -188,6 +208,68 @@ export async function findSimilarProductsViaAI(
   } catch (error) {
     console.error("[AIService] Error finding similar products:", error);
     throw new Error("Failed to find similar products via AI service");
+  }
+}
+
+/**
+ * Ask the AI service to diagnose whether a set of stored embeddings still
+ * match what the current live model would produce for the same text.
+ * Used by the admin Embedding Health panel — a verdict of "broken" means
+ * the user has stale TF-IDF garbage in the DB and needs to regenerate.
+ */
+export interface EmbeddingHealthSample {
+  id: number;
+  text: string;
+  embedding: number[];
+}
+
+export interface EmbeddingHealthReport {
+  model_name: string;
+  verdict: "healthy" | "broken" | "mixed" | "unknown";
+  ok_count: number;
+  total: number;
+  samples: Array<{
+    id: number;
+    cosine_to_fresh: number | null;
+    status: string;
+    stored_dim?: number;
+    fresh_dim?: number;
+  }>;
+}
+
+export async function checkEmbeddingHealth(
+  samples: EmbeddingHealthSample[],
+): Promise<EmbeddingHealthReport> {
+  try {
+    const response = await aiClient.post<EmbeddingHealthReport>(
+      "/admin/embedding-health",
+      { samples },
+    );
+    return response.data;
+  } catch (error) {
+    console.error("[AIService] Embedding health check failed:", error);
+    return {
+      model_name: "unknown",
+      verdict: "unknown",
+      ok_count: 0,
+      total: samples.length,
+      samples: [],
+    };
+  }
+}
+
+/**
+ * Clear the AI service's in-memory product-embedding cache. Best-effort —
+ * returns false if the service is down so callers can still report partial
+ * success for the Node-side cache flush.
+ */
+export async function clearAIServiceCache(): Promise<{ cleared: boolean; entries: number }> {
+  try {
+    const response = await aiClient.post<{ cleared_entries: number }>("/admin/clear-cache");
+    return { cleared: true, entries: response.data.cleared_entries ?? 0 };
+  } catch (error) {
+    console.warn("[AIService] Failed to clear cache:", error instanceof Error ? error.message : error);
+    return { cleared: false, entries: 0 };
   }
 }
 
