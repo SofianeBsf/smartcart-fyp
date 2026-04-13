@@ -91,7 +91,7 @@ export const productEmbeddings = pgTable("product_embeddings", {
 
   productId: integer("product_id").notNull().unique(),
   embedding: jsonb("embedding").$type<number[]>().notNull(),
-  embeddingModel: varchar("embedding_model", { length: 100 }).default("all-MiniLM-L6-v2"),
+  embeddingModel: varchar("embedding_model", { length: 100 }).default("BAAI/bge-small-en-v1.5"),
   textUsed: text("text_used"),
 
   createdAt: timestamp("created_at").defaultNow().notNull(),

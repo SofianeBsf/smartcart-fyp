@@ -676,16 +676,33 @@ export const appRouter = router({
       generateAllEmbeddings: adminProcedure.mutation(async () => {
         const products = await getAllProducts(10000, 0);
         const productIds = products.map(p => p.id);
-        
+
         try {
-          const result = await batchGenerateEmbeddings(productIds);
-          
+          // First try batch mode (faster)
+          let result = await batchGenerateEmbeddings(productIds);
+
+          // If batch failed entirely, retry the failed ones one-by-one
+          if (result.success === 0 && result.failed > 0) {
+            console.warn(`[Embeddings] Batch mode failed all ${result.failed}. Retrying one-by-one via generateProductEmbedding...`);
+            let soloSuccess = 0;
+            let soloFailed = 0;
+            for (const pid of productIds) {
+              try {
+                const ok = await generateProductEmbedding(pid);
+                if (ok) soloSuccess++; else soloFailed++;
+              } catch {
+                soloFailed++;
+              }
+            }
+            result = { success: soloSuccess, failed: soloFailed };
+          }
+
           // Notify owner of embedding generation completion
           await notifyOwner({
             title: "🧠 SmartCart: Embedding Generation Complete",
             content: `Successfully generated embeddings for ${result.success} products.\n\nTotal products: ${productIds.length}\nSuccessful: ${result.success}\nFailed: ${result.failed}`,
           }).catch(err => console.warn("[Notification] Failed to notify owner:", err));
-          
+
           return result;
         } catch (error) {
           // Notify owner of embedding generation failure
@@ -693,7 +710,7 @@ export const appRouter = router({
             title: "❌ SmartCart: Embedding Generation Failed",
             content: `Failed to generate embeddings.\n\nError: ${error instanceof Error ? error.message : "Unknown error"}\n\nPlease check the server logs for details.`,
           }).catch(err => console.warn("[Notification] Failed to notify owner:", err));
-          
+
           throw error;
         }
       }),

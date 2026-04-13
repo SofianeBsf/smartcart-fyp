@@ -22,6 +22,12 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import {
   Search as SearchIcon,
   Filter,
   ChevronDown,
@@ -265,11 +271,11 @@ export default function Search() {
           </aside>
 
           {/* Mobile Filter Toggle */}
-          <div className="lg:hidden fixed bottom-4 right-4 z-50">
+          <div className="lg:hidden fixed bottom-36 right-4 z-40">
             <Button
               size="lg"
               className="rounded-full shadow-lg"
-              onClick={() => setShowFilters(!showFilters)}
+              onClick={() => setShowFilters(true)}
             >
               <Filter className="w-4 h-4 mr-2" />
               Filters
@@ -280,6 +286,91 @@ export default function Search() {
               )}
             </Button>
           </div>
+
+          {/* Mobile Filter Sheet */}
+          <Sheet open={showFilters} onOpenChange={setShowFilters}>
+            <SheetContent side="bottom" className="h-[70vh] rounded-t-2xl">
+              <SheetHeader>
+                <SheetTitle className="flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <Filter className="w-4 h-4" />
+                    Filters
+                  </span>
+                  {hasActiveFilters && (
+                    <Button variant="ghost" size="sm" onClick={clearFilters}>
+                      Clear All
+                    </Button>
+                  )}
+                </SheetTitle>
+              </SheetHeader>
+              <div className="space-y-6 overflow-y-auto px-1 pb-6 pt-4">
+                {/* Category Filter */}
+                <div className="space-y-2">
+                  <Label>Category</Label>
+                  <Select value={category || "all"} onValueChange={(val) => setCategory(val === "all" ? "" : val)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="All categories" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All categories</SelectItem>
+                      {categories?.map((cat) => (
+                        <SelectItem key={cat} value={cat}>
+                          {cat}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Price Range */}
+                <div className="space-y-3">
+                  <Label>Price Range</Label>
+                  <Slider
+                    value={priceRange}
+                    onValueChange={(value) => setPriceRange(value as [number, number])}
+                    min={0}
+                    max={1000}
+                    step={10}
+                  />
+                  <div className="flex items-center justify-between text-sm text-muted-foreground">
+                    <span>£{priceRange[0]}</span>
+                    <span>£{priceRange[1]}{priceRange[1] >= 1000 ? "+" : ""}</span>
+                  </div>
+                </div>
+
+                {/* In Stock Only */}
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="in-stock-mobile">In Stock Only</Label>
+                  <Switch
+                    id="in-stock-mobile"
+                    checked={inStockOnly}
+                    onCheckedChange={setInStockOnly}
+                  />
+                </div>
+
+                {/* Sort By */}
+                <div className="space-y-2">
+                  <Label>Sort By</Label>
+                  <Select value={sortBy} onValueChange={setSortBy}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="relevance">Relevance</SelectItem>
+                      <SelectItem value="price-low">Price: Low to High</SelectItem>
+                      <SelectItem value="price-high">Price: High to Low</SelectItem>
+                      <SelectItem value="rating">Highest Rated</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Apply button */}
+                <Button className="w-full" onClick={() => setShowFilters(false)}>
+                  Apply Filters
+                </Button>
+              </div>
+            </SheetContent>
+          </Sheet>
 
           {/* Results Grid */}
           <main className="flex-1">

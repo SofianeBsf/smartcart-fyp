@@ -83,7 +83,7 @@ async function ensureProductEmbeddingsTableExists(db: any) {
       id serial PRIMARY KEY,
       product_id integer NOT NULL UNIQUE,
       embedding jsonb NOT NULL,
-      embedding_model varchar(100) DEFAULT 'all-MiniLM-L6-v2',
+      embedding_model varchar(100) DEFAULT 'BAAI/bge-small-en-v1.5',
       text_used text,
       created_at timestamp DEFAULT now() NOT NULL,
       updated_at timestamp DEFAULT now() NOT NULL
@@ -766,10 +766,14 @@ export async function createEmbedding(embedding: InsertProductEmbedding) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
-  await db.insert(productEmbeddings).values(embedding).onConflictDoUpdate({
+  await db.insert(productEmbeddings).values({
+    ...embedding,
+    embeddingModel: embedding.embeddingModel || "BAAI/bge-small-en-v1.5",
+  }).onConflictDoUpdate({
     target: productEmbeddings.productId,
     set: {
       embedding: embedding.embedding,
+      embeddingModel: embedding.embeddingModel || "BAAI/bge-small-en-v1.5",
       textUsed: embedding.textUsed,
       updatedAt: new Date(),
     },

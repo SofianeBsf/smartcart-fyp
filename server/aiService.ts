@@ -105,15 +105,26 @@ export async function checkAIServiceHealth(): Promise<boolean> {
 /**
  * Generate embedding for a PASSAGE / product text (no query prefix).
  * Use this when embedding things that will be indexed, not searched.
+ * Includes retry logic for cloud deployments where transient failures are common.
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
-  try {
-    const response = await aiClient.post<EmbeddingResponse>("/embed", { text });
-    return response.data.embedding;
-  } catch (error) {
-    console.error("[AIService] Error generating embedding:", error);
-    throw new Error("Failed to generate embedding from AI service");
+  const maxRetries = AI_SERVICE_URL.includes("localhost") ? 1 : 3;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await aiClient.post<EmbeddingResponse>("/embed", { text });
+      return response.data.embedding;
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const detail = error?.response?.data?.detail || error?.message || "unknown";
+      console.error(`[AIService] /embed attempt ${attempt}/${maxRetries} failed (HTTP ${status}): ${detail}`);
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, 1000 * attempt));
+        continue;
+      }
+      throw new Error(`Failed to generate embedding after ${maxRetries} attempts: ${detail}`);
+    }
   }
+  throw new Error("Unreachable");
 }
 
 /**
@@ -142,9 +153,11 @@ export async function generateBatchEmbeddings(texts: string[]): Promise<number[]
   try {
     const response = await aiClient.post<BatchEmbeddingResponse>("/embed/batch", { texts });
     return response.data.embeddings;
-  } catch (error) {
-    console.error("[AIService] Error generating batch embeddings:", error);
-    throw new Error("Failed to generate batch embeddings from AI service");
+  } catch (error: any) {
+    const status = error?.response?.status;
+    const detail = error?.response?.data?.detail || error?.message || "unknown";
+    console.error(`[AIService] /embed/batch failed (HTTP ${status}): ${detail}`);
+    throw new Error(`Failed to generate batch embeddings: ${detail}`);
   }
 }
 
