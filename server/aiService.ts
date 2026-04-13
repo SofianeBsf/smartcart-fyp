@@ -76,9 +76,11 @@ export interface SimilarProductsResponse {
 }
 
 // Create axios instance with timeout
+// Longer timeout for cloud deployments where the AI service may need to wake from sleep
+const isRemote = !AI_SERVICE_URL.includes("localhost");
 const aiClient = axios.create({
   baseURL: AI_SERVICE_URL,
-  timeout: 60000, // 60 second timeout for model loading
+  timeout: isRemote ? 180000 : 60000, // 3 min remote, 1 min local
   headers: {
     "Content-Type": "application/json",
   },
@@ -86,10 +88,13 @@ const aiClient = axios.create({
 
 /**
  * Check if the AI service is healthy
+ * Uses a longer timeout for cloud deployments where the service may need
+ * to wake up from sleep (Render free tier spins down after 15 min idle)
  */
 export async function checkAIServiceHealth(): Promise<boolean> {
   try {
-    const response = await axios.get(`${AI_SERVICE_URL}/health`, { timeout: 1500 });
+    const timeout = AI_SERVICE_URL.includes("localhost") ? 3000 : 120000;
+    const response = await axios.get(`${AI_SERVICE_URL}/health`, { timeout });
     return response.data.status === "healthy";
   } catch (error) {
     console.error("[AIService] Health check failed:", error);
