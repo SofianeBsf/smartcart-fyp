@@ -1,6 +1,123 @@
-# SmartCart — Free Deployment Guide
+# SmartCart — Deployment Guide
 
-This guide walks you through deploying SmartCart on the internet for free using **Render.com** (hosting) and **Neon** (database).
+This guide covers two things:
+1. **Running locally with Docker Desktop** (for development and your demo)
+2. **Deploying to the internet for free** (Render.com + Neon)
+
+---
+
+## Part 1 — Running Locally with Docker Desktop
+
+### What is Docker?
+
+Think of Docker as a "box" that packages your entire app — code, database, Python AI service — into isolated containers. Instead of installing PostgreSQL, Python, Node.js separately on your machine, Docker runs everything inside containers that are pre-configured and ready to go. Docker Desktop gives you a nice GUI to see and manage these containers.
+
+### What You'll Get
+
+When you run `docker compose up`, Docker creates **3 containers**:
+
+| Container | What it does | Port |
+|-----------|-------------|------|
+| `smartcart-postgres` | PostgreSQL database (no row limits!) | localhost:5432 |
+| `smartcart-ai` | Python AI service (BGE embeddings) | localhost:8000 |
+| `smartcart-app` | Your web app (Express + React) | localhost:3000 |
+
+### Step 1 — Install Docker Desktop
+
+1. Go to https://www.docker.com/products/docker-desktop/
+2. Download for your OS (Windows/Mac)
+3. Install and open Docker Desktop
+4. Wait until you see "Docker Desktop is running" (the whale icon in your taskbar should be steady, not animating)
+
+> **Windows users:** Docker Desktop may ask you to enable WSL 2 (Windows Subsystem for Linux). Click Yes and restart if prompted. This is normal.
+
+### Step 2 — Make Sure Your .env File Has the Gemini Keys
+
+Open your `.env` file in the project root and make sure these two lines are there (the chatbot needs them):
+
+```
+BUILT_IN_FORGE_API_URL=https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+BUILT_IN_FORGE_API_KEY=your-gemini-api-key-here
+```
+
+Docker Compose reads your `.env` file automatically.
+
+### Step 3 — Build and Start Everything
+
+Open a terminal in your project folder (`smartcart-fyp`) and run:
+
+```bash
+docker compose up --build
+```
+
+**What happens:**
+1. Docker downloads PostgreSQL (1 minute)
+2. Docker builds the Python AI service and downloads the BGE model (5–10 minutes first time)
+3. Docker builds the Node app (3–5 minutes first time)
+4. Everything starts up and connects together
+
+You'll see logs from all 3 services. Wait until you see something like:
+```
+smartcart-app  | Server running on port 3000
+```
+
+Then open **http://localhost:3000** in your browser — your app is running!
+
+> **First build is slow** (~10–15 minutes) because it downloads everything. After that, rebuilds only take 1–2 minutes because Docker caches the layers.
+
+### Step 4 — Seed Products and Generate Embeddings
+
+Your Docker PostgreSQL starts empty (it's a fresh database, separate from your Neon one). You'll need to:
+
+1. Open http://localhost:3000
+2. Log in as admin
+3. Go to Admin Dashboard → add/import products
+4. Click **Regenerate All Embeddings** to make semantic search work
+
+### Useful Docker Commands
+
+Run these from your project folder:
+
+| Command | What it does |
+|---------|-------------|
+| `docker compose up --build` | Build and start everything (shows logs) |
+| `docker compose up --build -d` | Same but runs in background (detached) |
+| `docker compose down` | Stop all containers |
+| `docker compose down -v` | Stop and **delete all database data** |
+| `docker compose logs -f app` | Follow logs for just the web app |
+| `docker compose logs -f ai-service` | Follow logs for just the AI service |
+| `docker compose restart app` | Restart just the web app |
+
+### Viewing Containers in Docker Desktop
+
+After running `docker compose up`, open Docker Desktop. You'll see a group called `smartcart-fyp` with 3 containers inside. You can click on any container to see its logs, stop it, restart it, etc. Green = running, red = stopped.
+
+### Stopping Everything
+
+Press `Ctrl+C` in the terminal where Docker is running, or run:
+```bash
+docker compose down
+```
+
+### Troubleshooting Docker
+
+**"port 5432 already in use"** — You have PostgreSQL running locally. Either stop it, or change the port in docker-compose.yml from `"5432:5432"` to `"5433:5432"`.
+
+**"Cannot connect to the Docker daemon"** — Docker Desktop isn't running. Open it first.
+
+**AI service keeps restarting** — Check logs with `docker compose logs ai-service`. If it says "Killed" or "OOM", your machine doesn't have enough RAM free. Close other apps and try again, or increase Docker's memory limit in Docker Desktop → Settings → Resources → Memory → set to 4GB+.
+
+**Build fails at npm install** — Delete `node_modules` and try again:
+```bash
+rm -rf node_modules
+docker compose up --build
+```
+
+---
+
+## Part 2 — Deploying to the Internet (Free)
+
+This section walks you through deploying SmartCart on the internet for free using **Render.com** (hosting) and **Neon** (database).
 
 ## What You'll End Up With
 
