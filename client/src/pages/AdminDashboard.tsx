@@ -361,8 +361,15 @@ function QuickActionButton({
     setIsLoading(true);
     try {
       if (action === "embeddings") {
-        const result = await generateEmbeddings.mutateAsync();
-        toast.success(`Generated ${result.success} embeddings (${result.failed} failed)`);
+        const result = await generateEmbeddings.mutateAsync() as any;
+        if (result.failed > 0 && result.errors?.length > 0) {
+          toast.error(
+            `Generated ${result.success}/${result.success + result.failed} embeddings.\n\nErrors:\n${result.errors.join("\n")}`,
+            { duration: 15000 },
+          );
+        } else {
+          toast.success(`Generated ${result.success} embeddings (${result.failed} failed)`);
+        }
       } else if (action === "cache") {
         const result = await clearCache.mutateAsync();
         toast.success(

@@ -24,8 +24,6 @@ import {
 import {
   Sheet,
   SheetContent,
-  SheetHeader,
-  SheetTitle,
 } from "@/components/ui/sheet";
 import {
   Search as SearchIcon,
@@ -46,11 +44,19 @@ export default function Search() {
   
   // Parse URL params
   const urlParams = useMemo(() => new URLSearchParams(searchParams), [searchParams]);
-  const initialQuery = urlParams.get("q") || "";
-  
-  const [searchQuery, setSearchQuery] = useState(initialQuery);
-  const [submittedQuery, setSubmittedQuery] = useState(initialQuery);
+  const urlQuery = urlParams.get("q") || "";
+
+  const [searchQuery, setSearchQuery] = useState(urlQuery);
+  const [submittedQuery, setSubmittedQuery] = useState(urlQuery);
   const [showFilters, setShowFilters] = useState(false);
+
+  // Sync when URL query changes (e.g. header search bar navigates here)
+  useEffect(() => {
+    if (urlQuery && urlQuery !== submittedQuery) {
+      setSearchQuery(urlQuery);
+      setSubmittedQuery(urlQuery);
+    }
+  }, [urlQuery]);
   
   // Filters
   const [category, setCategory] = useState<string>("");
@@ -271,7 +277,7 @@ export default function Search() {
           </aside>
 
           {/* Mobile Filter Toggle */}
-          <div className="lg:hidden fixed bottom-36 right-4 z-40">
+          <div className="lg:hidden fixed bottom-4 right-4 z-40">
             <Button
               size="lg"
               className="rounded-full shadow-lg"
@@ -289,21 +295,19 @@ export default function Search() {
 
           {/* Mobile Filter Sheet */}
           <Sheet open={showFilters} onOpenChange={setShowFilters}>
-            <SheetContent side="bottom" className="h-[70vh] rounded-t-2xl">
-              <SheetHeader>
-                <SheetTitle className="flex items-center justify-between">
-                  <span className="flex items-center gap-2">
-                    <Filter className="w-4 h-4" />
-                    Filters
-                  </span>
-                  {hasActiveFilters && (
-                    <Button variant="ghost" size="sm" onClick={clearFilters}>
-                      Clear All
-                    </Button>
-                  )}
-                </SheetTitle>
-              </SheetHeader>
-              <div className="space-y-6 overflow-y-auto px-1 pb-6 pt-4">
+            <SheetContent side="bottom" className="h-[65vh] rounded-t-2xl">
+              <div className="flex items-center justify-between pr-10 pl-2 pt-1 pb-1">
+                <span className="flex items-center gap-2 font-semibold text-base">
+                  <Filter className="w-4 h-4" />
+                  Filters
+                </span>
+                {hasActiveFilters && (
+                  <Button variant="ghost" size="sm" onClick={clearFilters}>
+                    Clear All
+                  </Button>
+                )}
+              </div>
+              <div className="space-y-6 overflow-y-auto px-4 pb-6 pt-2">
                 {/* Category Filter */}
                 <div className="space-y-2">
                   <Label>Category</Label>
