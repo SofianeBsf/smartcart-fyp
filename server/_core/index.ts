@@ -374,59 +374,52 @@ async function startServer() {
     }
   });
 
-  // ── Diagnostic: test SMTP email (admin only, remove after debugging) ──
+  // ── Diagnostic: test email (Resend or SMTP) ──
   app.get("/api/auth/test-email", async (req, res) => {
     const smtpUser = process.env.SMTP_USER;
     const smtpPass = process.env.SMTP_PASS;
+    const resendKey = process.env.RESEND_API_KEY;
     const baseUrl = process.env.BASE_URL;
+    const mode = resendKey ? "resend" : (smtpUser && smtpPass) ? "smtp" : "none";
 
-    if (!smtpUser || !smtpPass) {
+    if (mode === "none") {
       return res.json({
-        success: false,
-        error: "SMTP not configured",
-        detail: {
-          SMTP_USER: smtpUser ? "SET (" + smtpUser + ")" : "MISSING",
-          SMTP_PASS: smtpPass ? "SET (length=" + smtpPass.length + ")" : "MISSING",
-          BASE_URL: baseUrl || "not set",
-        },
+        success: false, error: "No email provider configured",
+        detail: { RESEND_API_KEY: "MISSING", SMTP_USER: smtpUser ? "SET" : "MISSING", SMTP_PASS: smtpPass ? "SET" : "MISSING" },
       });
     }
 
     try {
-      const nodemailer = await import("nodemailer");
-      const testTransporter = nodemailer.default.createTransport({
-        service: "gmail",
-        auth: { user: smtpUser, pass: smtpPass },
-        connectionTimeout: 15000,
-        greetingTimeout: 15000,
-        socketTimeout: 20000,
-      });
-
-      // Verify SMTP connection first
-      await testTransporter.verify();
-
-      // Send a real test email to the SMTP_USER itself
-      const info = await testTransporter.sendMail({
-        from: `SmartCart Test <${smtpUser}>`,
-        to: smtpUser,
-        subject: "SmartCart SMTP Test - " + new Date().toISOString(),
-        text: "If you see this, SMTP is working!",
-      });
-
-      return res.json({
-        success: true,
-        messageId: info.messageId,
-        sentTo: smtpUser,
-        config: { SMTP_USER: smtpUser, BASE_URL: baseUrl },
-      });
+      if (mode === "resend") {
+        const r = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from: "SmartCart Test <onboarding@resend.dev>",
+            to: [smtpUser || req.query.to || "test@example.com"],
+            subject: "SmartCart Email Test - " + new Date().toISOString(),
+            html: "<p>If you see this, Resend email is working!</p>",
+          }),
+        });
+        const data = await r.json();
+        if (!r.ok) return res.json({ success: false, mode, error: data.message || `HTTP ${r.status}`, data });
+        return res.json({ success: true, mode, messageId: data.id, config: { BASE_URL: baseUrl } });
+      } else {
+        const nodemailer = await import("nodemailer");
+        const t = nodemailer.default.createTransport({
+          service: "gmail", auth: { user: smtpUser!, pass: smtpPass! },
+          connectionTimeout: 15000, greetingTimeout: 15000, socketTimeout: 20000,
+        });
+        await t.verify();
+        const info = await t.sendMail({
+          from: `SmartCart Test <${smtpUser}>`, to: smtpUser!,
+          subject: "SmartCart SMTP Test - " + new Date().toISOString(),
+          text: "If you see this, SMTP is working!",
+        });
+        return res.json({ success: true, mode, messageId: info.messageId, sentTo: smtpUser, config: { BASE_URL: baseUrl } });
+      }
     } catch (err: any) {
-      return res.json({
-        success: false,
-        error: err.message || String(err),
-        code: err.code,
-        command: err.command,
-        config: { SMTP_USER: smtpUser, SMTP_PASS_LENGTH: smtpPass.length, BASE_URL: baseUrl },
-      });
+      return res.json({ success: false, mode, error: err.message || String(err), code: err.code });
     }
   });
 

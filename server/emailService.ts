@@ -2,27 +2,124 @@ import nodemailer from 'nodemailer';
 
 const SMTP_USER = process.env.SMTP_USER;
 const SMTP_PASS = process.env.SMTP_PASS;
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 
-if (!SMTP_USER || !SMTP_PASS) {
+// Determine email mode: Resend (HTTP) preferred, SMTP fallback
+const emailMode: 'resend' | 'smtp' | 'none' =
+  RESEND_API_KEY ? 'resend' :
+  (SMTP_USER && SMTP_PASS) ? 'smtp' :
+  'none';
+
+if (emailMode === 'none') {
   console.warn(
-    'Warning: SMTP_USER or SMTP_PASS is not set. Email functionality will be disabled.'
+    'Warning: Neither RESEND_API_KEY nor SMTP_USER/SMTP_PASS are set. Email functionality will be disabled.'
   );
+} else {
+  console.log(`[Email] Using ${emailMode} mode`);
 }
 
+// SMTP transporter (fallback for local dev)
 const transporter =
-  SMTP_USER && SMTP_PASS
+  emailMode === 'smtp'
     ? nodemailer.createTransport({
         service: 'gmail',
         auth: {
-          user: SMTP_USER,
-          pass: SMTP_PASS,
+          user: SMTP_USER!,
+          pass: SMTP_PASS!,
         },
-        connectionTimeout: 10000, // 10s to connect
-        greetingTimeout: 10000,   // 10s for SMTP greeting
-        socketTimeout: 15000,     // 15s for socket inactivity
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 15000,
       })
     : null;
+
+/**
+ * Send email via Resend HTTP API (works from cloud hosts that block SMTP)
+ */
+async function sendViaResend(
+  to: string,
+  subject: string,
+  html: string,
+  from?: string,
+): Promise<EmailResponse> {
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: from || `SmartCart <onboarding@resend.dev>`,
+        to: [to],
+        subject,
+        html,
+      }),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      console.error('[Email/Resend] API error:', data);
+      return { success: false, error: data.message || `HTTP ${res.status}` };
+    }
+
+    console.log('[Email/Resend] Sent to', to, '- ID:', data.id);
+    return { success: true, messageId: data.id };
+  } catch (error) {
+    console.error('[Email/Resend] Error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Send email via SMTP (nodemailer)
+ */
+async function sendViaSMTP(
+  to: string,
+  subject: string,
+  html: string,
+  from?: string,
+): Promise<EmailResponse> {
+  if (!transporter) {
+    return { success: false, error: 'SMTP not configured' };
+  }
+  try {
+    const info = await transporter.sendMail({
+      from: from || `SmartCart <${SMTP_USER}>`,
+      to,
+      subject,
+      html,
+    });
+    console.log('[Email/SMTP] Sent to', to, '- ID:', info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error('[Email/SMTP] Error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Unified email send — routes to Resend or SMTP based on config
+ */
+async function sendEmail(
+  to: string,
+  subject: string,
+  html: string,
+  from?: string,
+): Promise<EmailResponse> {
+  if (emailMode === 'resend') return sendViaResend(to, subject, html, from);
+  if (emailMode === 'smtp') return sendViaSMTP(to, subject, html, from);
+  console.warn('[Email] No email provider configured. Email not sent.');
+  return { success: false, error: 'Email service not configured' };
+}
 
 interface EmailResponse {
   success: boolean;
@@ -50,8 +147,8 @@ export async function sendVerificationEmail(
   name: string,
   token: string
 ): Promise<EmailResponse> {
-  if (!transporter) {
-    console.warn('SMTP not configured. Email not sent.');
+  if (emailMode === 'none') {
+    console.warn('Email not configured. Verification email not sent.');
     return { success: false, error: 'Email service not configured' };
   }
 
@@ -161,23 +258,7 @@ export async function sendVerificationEmail(
     </html>
   `;
 
-  try {
-    const info = await transporter.sendMail({
-      from: `SmartCart <${SMTP_USER}>`,
-      to: email,
-      subject: 'Verify your SmartCart email address',
-      html: htmlContent,
-    });
-
-    console.log('[Email] Verification email sent to', email, '- ID:', info.messageId);
-    return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error('Error sending verification email:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
+  return sendEmail(email, 'Verify your SmartCart email address', htmlContent);
 }
 
 /**
@@ -188,8 +269,8 @@ export async function sendPasswordResetEmail(
   name: string,
   token: string
 ): Promise<EmailResponse> {
-  if (!transporter) {
-    console.warn('SMTP not configured. Email not sent.');
+  if (emailMode === 'none') {
+    console.warn('Email not configured. Password reset email not sent.');
     return { success: false, error: 'Email service not configured' };
   }
 
@@ -308,23 +389,7 @@ export async function sendPasswordResetEmail(
     </html>
   `;
 
-  try {
-    const info = await transporter.sendMail({
-      from: `SmartCart <${SMTP_USER}>`,
-      to: email,
-      subject: 'Reset your SmartCart password',
-      html: htmlContent,
-    });
-
-    console.log('[Email] Password reset email sent to', email, '- ID:', info.messageId);
-    return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error('Error sending password reset email:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
+  return sendEmail(email, 'Reset your SmartCart password', htmlContent);
 }
 
 /**
@@ -335,8 +400,8 @@ export async function sendPurchaseConfirmationEmail(
   name: string,
   orderDetails: OrderDetails
 ): Promise<EmailResponse> {
-  if (!transporter) {
-    console.warn('SMTP not configured. Email not sent.');
+  if (emailMode === 'none') {
+    console.warn('Email not configured. Purchase confirmation not sent.');
     return { success: false, error: 'Email service not configured' };
   }
 
@@ -527,21 +592,9 @@ export async function sendPurchaseConfirmationEmail(
     </html>
   `;
 
-  try {
-    const info = await transporter.sendMail({
-      from: `SmartCart <${SMTP_USER}>`,
-      to: email,
-      subject: `Order Confirmation - SmartCart Order #${orderDetails.orderId}`,
-      html: htmlContent,
-    });
-
-    console.log('[Email] Purchase confirmation sent to', email, '- ID:', info.messageId);
-    return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error('Error sending purchase confirmation email:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
+  return sendEmail(
+    email,
+    `Order Confirmation - SmartCart Order #${orderDetails.orderId}`,
+    htmlContent,
+  );
 }

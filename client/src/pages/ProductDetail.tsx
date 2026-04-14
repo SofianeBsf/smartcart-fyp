@@ -29,6 +29,9 @@ import {
   Twitter,
   Facebook,
   MessageCircle,
+  Minus,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import Header from "@/components/Header";
 import ProductCard from "@/components/ProductCard";
@@ -38,7 +41,7 @@ export default function ProductDetail() {
   const [, setLocation] = useLocation();
   const productId = parseInt(id || "0", 10);
   const [addedToCart, setAddedToCart] = useState(false);
-  const { addItem: addToCart } = useCart();
+  const { items: cartItems, addItem: addToCart, updateQuantity, removeItem } = useCart();
   const { isInWishlist, toggleItem: toggleWishlist } = useWishlist();
 
   // Fetch product details
@@ -295,37 +298,74 @@ export default function ProductDetail() {
 
             {/* Actions */}
             <div className="flex gap-3 pt-4">
-              <Button
-                size="lg"
-                className="flex-1"
-                disabled={product.availability === "out_of_stock"}
-                onClick={() => {
-                  const productImage = productCompat.imageUrl || productCompat.image_url || productCompat.image || "";
-                  addToCart({
-                    productId: product.id,
-                    title: product.title,
-                    price: parseFloat(product.price || "0"),
-                    imageUrl: productImage,
-                    quantity: 1,
-                  });
-                  setAddedToCart(true);
-                  recordInteraction.mutate({
-                    productId: product.id,
-                    interactionType: "add_to_cart",
-                  });
-                }}
-              >
-                <ShoppingCart className="w-5 h-5 mr-2" />
-                {addedToCart ? "Added!" : "Add to Cart"}
-              </Button>
+              {(() => {
+                const cartItem = cartItems.find(i => i.productId === product.id);
+                const qty = cartItem?.quantity || 0;
 
-              {addedToCart && (
-                <Link href="/cart">
-                  <Button size="lg" variant="outline" className="flex-1">
-                    View Cart
+                if (qty > 0) {
+                  return (
+                    <>
+                      <div className="flex items-center gap-0 border rounded-lg overflow-hidden">
+                        <Button
+                          size="lg"
+                          variant="ghost"
+                          className="rounded-none px-3"
+                          onClick={() => {
+                            if (qty === 1) {
+                              removeItem(product.id);
+                              setAddedToCart(false);
+                            } else {
+                              updateQuantity(product.id, qty - 1);
+                            }
+                          }}
+                        >
+                          {qty === 1 ? <Trash2 className="w-4 h-4" /> : <Minus className="w-4 h-4" />}
+                        </Button>
+                        <span className="px-5 text-lg font-semibold min-w-[3rem] text-center">{qty}</span>
+                        <Button
+                          size="lg"
+                          variant="ghost"
+                          className="rounded-none px-3"
+                          onClick={() => updateQuantity(product.id, qty + 1)}
+                        >
+                          <Plus className="w-4 h-4" />
+                        </Button>
+                      </div>
+                      <Link href="/cart">
+                        <Button size="lg" variant="outline" className="flex-1">
+                          View Cart
+                        </Button>
+                      </Link>
+                    </>
+                  );
+                }
+
+                return (
+                  <Button
+                    size="lg"
+                    className="flex-1"
+                    disabled={product.availability === "out_of_stock"}
+                    onClick={() => {
+                      const productImage = productCompat.imageUrl || productCompat.image_url || productCompat.image || "";
+                      addToCart({
+                        productId: product.id,
+                        title: product.title,
+                        price: parseFloat(product.price || "0"),
+                        imageUrl: productImage,
+                        quantity: 1,
+                      });
+                      setAddedToCart(true);
+                      recordInteraction.mutate({
+                        productId: product.id,
+                        interactionType: "add_to_cart",
+                      });
+                    }}
+                  >
+                    <ShoppingCart className="w-5 h-5 mr-2" />
+                    Add to Cart
                   </Button>
-                </Link>
-              )}
+                );
+              })()}
 
               <Button
                 size="lg"

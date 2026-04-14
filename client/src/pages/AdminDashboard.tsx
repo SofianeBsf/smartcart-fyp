@@ -11,6 +11,22 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import {
   Table,
@@ -37,6 +53,11 @@ import {
   CheckCircle,
   Loader2,
   ArrowLeft,
+  Plus,
+  Pencil,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import Header from "@/components/Header";
 
@@ -386,8 +407,7 @@ function QuickActionButton({
       }
     } catch (error: any) {
       const msg = error?.message || error?.data?.message || JSON.stringify(error) || "Unknown error";
-      setLastError(msg);
-      toast.error("Action failed — see error details below");
+      toast.error(`Action failed: ${msg}`);
     } finally {
       setIsLoading(false);
     }
@@ -414,23 +434,179 @@ function QuickActionButton({
 }
 
 function CatalogTab() {
-  const [products, setProducts] = useState<any[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const utils = trpc.useUtils();
 
-  const { data: productList, isLoading } = trpc.products.list.useQuery({ limit: 50 });
+  // Pagination state
+  const PAGE_SIZE = 20;
+  const [page, setPage] = useState(0);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+
+  // Dialog states
+  const [showAddDialog, setShowAddDialog] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<any | null>(null);
+
+  // Form state for add/edit
+  const emptyForm = {
+    title: "", description: "", category: "", brand: "",
+    price: "", imageUrl: "", rating: "", availability: "in_stock" as const,
+    stockQuantity: "100", asin: "",
+  };
+  const [form, setForm] = useState(emptyForm);
+
+  const { data: productList, isLoading } = trpc.products.list.useQuery({
+    limit: PAGE_SIZE,
+    offset: page * PAGE_SIZE,
+  });
   const { data: uploadJobs } = trpc.admin.catalog.jobs.useQuery({ limit: 5 });
+
   const uploadCatalog = trpc.admin.catalog.upload.useMutation({
     onSuccess: () => {
       toast.success("Catalog uploaded successfully");
       utils.products.list.invalidate();
       utils.admin.catalog.jobs.invalidate();
     },
-    onError: (error) => {
-      toast.error(`Upload failed: ${error.message}`);
-    },
+    onError: (error) => toast.error(`Upload failed: ${error.message}`),
   });
 
+  const createProduct = trpc.admin.products.create.useMutation({
+    onSuccess: () => {
+      toast.success("Product created (embedding generated)");
+      utils.products.list.invalidate();
+      setShowAddDialog(false);
+      setForm(emptyForm);
+    },
+    onError: (error) => toast.error(`Create failed: ${error.message}`),
+  });
+
+  const updateProduct = trpc.admin.products.update.useMutation({
+    onSuccess: () => {
+      toast.success("Product updated");
+      utils.products.list.invalidate();
+      setEditingProduct(null);
+      setForm(emptyForm);
+    },
+    onError: (error) => toast.error(`Update failed: ${error.message}`),
+  });
+
+  const deleteProduct = trpc.admin.products.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Product deleted");
+      utils.products.list.invalidate();
+    },
+    onError: (error) => toast.error(`Delete failed: ${error.message}`),
+  });
+
+  const deleteMany = trpc.admin.products.deleteMany.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Deleted ${data.deleted} product(s)`);
+      setSelectedIds(new Set());
+      utils.products.list.invalidate();
+    },
+    onError: (error) => toast.error(`Delete failed: ${error.message}`),
+  });
+
+  const generateSelected = trpc.admin.products.generateSelectedEmbeddings.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Embeddings: ${data.success} generated, ${data.failed} failed`);
+      setSelectedIds(new Set());
+    },
+    onError: (error) => toast.error(`Embedding generation failed: ${error.message}`),
+  });
+
+  // Filter products client-side by search query
+  const allProducts = productList?.products || [];
+  const filtered = searchQuery.trim()
+    ? allProducts.filter(p =>
+        p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (p.category || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (p.brand || "").toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : allProducts;
+
+  const total = productList?.total || 0;
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+
+  const allVisibleIds = filtered.map(p => p.id);
+  const allSelected = allVisibleIds.length > 0 && allVisibleIds.every(id => selectedIds.has(id));
+
+  const toggleAll = () => {
+    if (allSelected) {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        allVisibleIds.forEach(id => next.delete(id));
+        return next;
+      });
+    } else {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        allVisibleIds.forEach(id => next.add(id));
+        return next;
+      });
+    }
+  };
+
+  const toggleOne = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const openEdit = (product: any) => {
+    setForm({
+      title: product.title || "",
+      description: product.description || "",
+      category: product.category || "",
+      brand: product.brand || "",
+      price: product.price || "",
+      imageUrl: product.imageUrl || "",
+      rating: product.rating || "",
+      availability: product.availability || "in_stock",
+      stockQuantity: String(product.stockQuantity ?? 100),
+      asin: product.asin || "",
+    });
+    setEditingProduct(product);
+  };
+
+  const handleSave = () => {
+    if (!form.title.trim()) {
+      toast.error("Title is required");
+      return;
+    }
+    if (editingProduct) {
+      updateProduct.mutate({
+        id: editingProduct.id,
+        title: form.title.trim(),
+        description: form.description || undefined,
+        category: form.category || undefined,
+        brand: form.brand || undefined,
+        price: form.price || undefined,
+        imageUrl: form.imageUrl || undefined,
+        rating: form.rating || undefined,
+        availability: form.availability as any,
+        stockQuantity: parseInt(form.stockQuantity) || 100,
+      });
+    } else {
+      createProduct.mutate({
+        title: form.title.trim(),
+        description: form.description || undefined,
+        category: form.category || undefined,
+        brand: form.brand || undefined,
+        price: form.price || undefined,
+        imageUrl: form.imageUrl || undefined,
+        rating: form.rating || undefined,
+        availability: form.availability as any,
+        stockQuantity: parseInt(form.stockQuantity) || 100,
+        asin: form.asin || undefined,
+      });
+    }
+  };
+
+  // CSV upload handler
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -438,7 +614,6 @@ function CatalogTab() {
     try {
       const text = await file.text();
       const lines = text.split("\n").filter(line => line.trim());
-      
       if (lines.length < 2) {
         toast.error("CSV file must have headers and at least one data row");
         return;
@@ -448,29 +623,16 @@ function CatalogTab() {
         const values: string[] = [];
         let current = "";
         let inQuotes = false;
-
         for (let i = 0; i < line.length; i++) {
           const char = line[i];
-
           if (char === '"') {
-            if (inQuotes && line[i + 1] === '"') {
-              current += '"';
-              i++;
-            } else {
-              inQuotes = !inQuotes;
-            }
+            if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+            else inQuotes = !inQuotes;
             continue;
           }
-
-          if (char === "," && !inQuotes) {
-            values.push(current.trim());
-            current = "";
-            continue;
-          }
-
+          if (char === "," && !inQuotes) { values.push(current.trim()); current = ""; continue; }
           current += char;
         }
-
         values.push(current.trim());
         return values;
       };
@@ -479,48 +641,23 @@ function CatalogTab() {
       const products = lines.slice(1).map(line => {
         const values = parseCsvLine(line);
         const product: any = {};
-        
         headers.forEach((header, index) => {
           const value = values[index]?.trim().replace(/^"|"$/g, "");
-          
           switch (header) {
-            case "title":
-            case "name":
-              product.title = value;
-              break;
-            case "description":
-              product.description = value;
-              break;
-            case "category":
-              product.category = value;
-              break;
-            case "price":
-              product.price = value;
-              break;
-            case "rating":
-              product.rating = value;
-              break;
-            case "image":
-            case "imageurl":
-            case "image_url":
-              product.imageUrl = value;
-              break;
-            case "brand":
-              product.brand = value;
-              break;
-            case "asin":
-              product.asin = value;
-              break;
+            case "title": case "name": product.title = value; break;
+            case "description": product.description = value; break;
+            case "category": product.category = value; break;
+            case "price": product.price = value; break;
+            case "rating": product.rating = value; break;
+            case "image": case "imageurl": case "image_url": product.imageUrl = value; break;
+            case "brand": product.brand = value; break;
+            case "asin": product.asin = value; break;
           }
         });
-
         return product;
       }).filter(p => p.title);
 
-      if (products.length === 0) {
-        toast.error("No valid products found in CSV");
-        return;
-      }
+      if (products.length === 0) { toast.error("No valid products found in CSV"); return; }
 
       toast.info(`Uploading ${products.length} products...`);
       await uploadCatalog.mutateAsync({ products, generateEmbeddings: true });
@@ -528,14 +665,102 @@ function CatalogTab() {
       const message = error instanceof Error ? error.message : "Failed to upload catalog";
       toast.error(message.includes("Failed to parse CSV") ? message : `Upload failed: ${message}`);
     }
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
+
+  const isSaving = createProduct.isPending || updateProduct.isPending;
+
+  // Product form dialog (shared for add + edit)
+  const productFormDialog = (
+    <Dialog
+      open={showAddDialog || !!editingProduct}
+      onOpenChange={(open) => {
+        if (!open) { setShowAddDialog(false); setEditingProduct(null); setForm(emptyForm); }
+      }}
+    >
+      <DialogContent className="sm:max-w-[550px] max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{editingProduct ? "Edit Product" : "Add Product"}</DialogTitle>
+          <DialogDescription>
+            {editingProduct ? "Update the product details below." : "Fill in the product details. Embedding will be generated automatically."}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-2">
+          <div className="grid gap-2">
+            <Label>Title *</Label>
+            <Input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="Product title" />
+          </div>
+          <div className="grid gap-2">
+            <Label>Description</Label>
+            <Input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Product description" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="grid gap-2">
+              <Label>Category</Label>
+              <Input value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} placeholder="e.g. Electronics" />
+            </div>
+            <div className="grid gap-2">
+              <Label>Brand</Label>
+              <Input value={form.brand} onChange={e => setForm(f => ({ ...f, brand: e.target.value }))} placeholder="e.g. Samsung" />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="grid gap-2">
+              <Label>Price (£)</Label>
+              <Input type="number" step="0.01" min="0" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} placeholder="29.99" />
+            </div>
+            <div className="grid gap-2">
+              <Label>Rating</Label>
+              <Input type="number" step="0.1" min="0" max="5" value={form.rating} onChange={e => setForm(f => ({ ...f, rating: e.target.value }))} placeholder="4.5" />
+            </div>
+            <div className="grid gap-2">
+              <Label>Stock Qty</Label>
+              <Input type="number" min="0" value={form.stockQuantity} onChange={e => setForm(f => ({ ...f, stockQuantity: e.target.value }))} />
+            </div>
+          </div>
+          <div className="grid gap-2">
+            <Label>Image URL</Label>
+            <Input value={form.imageUrl} onChange={e => setForm(f => ({ ...f, imageUrl: e.target.value }))} placeholder="https://..." />
+            {form.imageUrl && (
+              <img src={form.imageUrl} alt="Preview" className="w-20 h-20 object-cover rounded border" onError={e => (e.currentTarget.style.display = "none")} />
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="grid gap-2">
+              <Label>Availability</Label>
+              <Select value={form.availability} onValueChange={v => setForm(f => ({ ...f, availability: v as any }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="in_stock">In Stock</SelectItem>
+                  <SelectItem value="low_stock">Low Stock</SelectItem>
+                  <SelectItem value="out_of_stock">Out of Stock</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {!editingProduct && (
+              <div className="grid gap-2">
+                <Label>ASIN (optional)</Label>
+                <Input value={form.asin} onChange={e => setForm(f => ({ ...f, asin: e.target.value }))} placeholder="B0..." />
+              </div>
+            )}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => { setShowAddDialog(false); setEditingProduct(null); setForm(emptyForm); }}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={isSaving}>
+            {isSaving ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving...</> : editingProduct ? "Update Product" : "Create Product"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 
   return (
     <div className="space-y-6">
+      {productFormDialog}
+
       {/* Upload Section */}
       <Card>
         <CardHeader>
@@ -544,8 +769,8 @@ function CatalogTab() {
             Upload Catalog
           </CardTitle>
           <CardDescription>
-            Upload a CSV file with product data. Required columns: title. 
-            Optional: description, category, price, rating, imageUrl, brand.
+            Upload a CSV file with product data. Required columns: title.
+            Optional: description, category, price, rating, imageUrl, brand, asin.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -557,22 +782,8 @@ function CatalogTab() {
               onChange={handleFileUpload}
               disabled={uploadCatalog.isPending}
             />
-            <Button
-              variant="outline"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploadCatalog.isPending}
-            >
-              {uploadCatalog.isPending ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Uploading...
-                </>
-              ) : (
-                <>
-                  <FileUp className="w-4 h-4 mr-2" />
-                  Select CSV
-                </>
-              )}
+            <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={uploadCatalog.isPending}>
+              {uploadCatalog.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Uploading...</> : <><FileUp className="w-4 h-4 mr-2" />Select CSV</>}
             </Button>
           </div>
 
@@ -582,36 +793,15 @@ function CatalogTab() {
               <h4 className="text-sm font-medium mb-3">Recent Uploads</h4>
               <div className="space-y-2">
                 {uploadJobs.map((job) => (
-                  <div
-                    key={job.id}
-                    className="flex items-center justify-between p-3 bg-muted/50 rounded-lg"
-                  >
+                  <div key={job.id} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
                     <div className="flex items-center gap-3">
-                      {job.status === "completed" ? (
-                        <CheckCircle className="w-4 h-4 text-green-500" />
-                      ) : job.status === "failed" ? (
-                        <AlertCircle className="w-4 h-4 text-red-500" />
-                      ) : (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      )}
+                      {job.status === "completed" ? <CheckCircle className="w-4 h-4 text-green-500" /> : job.status === "failed" ? <AlertCircle className="w-4 h-4 text-red-500" /> : <Loader2 className="w-4 h-4 animate-spin" />}
                       <div>
                         <p className="text-sm font-medium">{job.filename}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {job.processedRows}/{job.totalRows} products • {job.embeddedRows} embeddings
-                        </p>
+                        <p className="text-xs text-muted-foreground">{job.processedRows}/{job.totalRows} products • {job.embeddedRows} embeddings</p>
                       </div>
                     </div>
-                    <Badge
-                      variant={
-                        job.status === "completed"
-                          ? "default"
-                          : job.status === "failed"
-                          ? "destructive"
-                          : "secondary"
-                      }
-                    >
-                      {job.status}
-                    </Badge>
+                    <Badge variant={job.status === "completed" ? "default" : job.status === "failed" ? "destructive" : "secondary"}>{job.status}</Badge>
                   </div>
                 ))}
               </div>
@@ -628,59 +818,143 @@ function CatalogTab() {
               <Package className="w-5 h-5" />
               Products
             </span>
-            <Badge variant="outline">{productList?.total || 0} total</Badge>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline">{total} total</Badge>
+              <Button size="sm" onClick={() => { setForm(emptyForm); setShowAddDialog(true); }}>
+                <Plus className="w-4 h-4 mr-1" />Add Product
+              </Button>
+            </div>
           </CardTitle>
         </CardHeader>
         <CardContent>
+          {/* Toolbar: search + bulk actions */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 mb-4">
+            <div className="relative flex-1 w-full">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder="Search products on this page..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+              />
+            </div>
+            {selectedIds.size > 0 && (
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary">{selectedIds.size} selected</Badge>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={generateSelected.isPending}
+                  onClick={() => generateSelected.mutate({ productIds: Array.from(selectedIds) })}
+                >
+                  {generateSelected.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Brain className="w-4 h-4 mr-1" />}
+                  Generate Embeddings
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  disabled={deleteMany.isPending}
+                  onClick={() => {
+                    if (confirm(`Delete ${selectedIds.size} product(s)? This cannot be undone.`)) {
+                      deleteMany.mutate({ ids: Array.from(selectedIds) });
+                    }
+                  }}
+                >
+                  {deleteMany.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Trash2 className="w-4 h-4 mr-1" />}
+                  Delete
+                </Button>
+              </div>
+            )}
+          </div>
+
           {isLoading ? (
             <div className="space-y-2">
               {Array.from({ length: 5 }).map((_, i) => (
                 <div key={i} className="h-12 bg-muted animate-pulse rounded" />
               ))}
             </div>
-          ) : productList?.products && productList.products.length > 0 ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Title</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead>Price</TableHead>
-                  <TableHead>Rating</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {productList.products.map((product) => (
-                  <TableRow key={product.id}>
-                    <TableCell className="font-medium max-w-[300px] truncate">
-                      {product.title}
-                    </TableCell>
-                    <TableCell>{product.category || "-"}</TableCell>
-                    <TableCell>
-                      {product.price ? `£${parseFloat(product.price).toFixed(2)}` : "-"}
-                    </TableCell>
-                    <TableCell>{product.rating || "-"}</TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          product.availability === "in_stock"
-                            ? "default"
-                            : product.availability === "low_stock"
-                            ? "secondary"
-                            : "destructive"
-                        }
-                      >
-                        {product.availability?.replace("_", " ") || "unknown"}
-                      </Badge>
-                    </TableCell>
+          ) : filtered.length > 0 ? (
+            <>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox checked={allSelected} onCheckedChange={toggleAll} />
+                    </TableHead>
+                    <TableHead>Title</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead>Price</TableHead>
+                    <TableHead>Rating</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="w-24 text-right">Actions</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map((product) => (
+                    <TableRow key={product.id} className={selectedIds.has(product.id) ? "bg-primary/5" : ""}>
+                      <TableCell>
+                        <Checkbox
+                          checked={selectedIds.has(product.id)}
+                          onCheckedChange={() => toggleOne(product.id)}
+                        />
+                      </TableCell>
+                      <TableCell className="font-medium max-w-[280px] truncate">{product.title}</TableCell>
+                      <TableCell>{product.category || "-"}</TableCell>
+                      <TableCell>{product.price ? `£${parseFloat(product.price).toFixed(2)}` : "-"}</TableCell>
+                      <TableCell>{product.rating || "-"}</TableCell>
+                      <TableCell>
+                        <Badge variant={product.availability === "in_stock" ? "default" : product.availability === "low_stock" ? "secondary" : "destructive"}>
+                          {product.availability?.replace("_", " ") || "unknown"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openEdit(product)}>
+                            <Pencil className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-destructive hover:text-destructive"
+                            onClick={() => {
+                              if (confirm(`Delete "${product.title}"?`)) {
+                                deleteProduct.mutate({ id: product.id });
+                              }
+                            }}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between pt-4">
+                  <p className="text-sm text-muted-foreground">
+                    Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" disabled={page === 0} onClick={() => { setPage(p => p - 1); setSelectedIds(new Set()); }}>
+                      <ChevronLeft className="w-4 h-4 mr-1" />Prev
+                    </Button>
+                    <span className="text-sm font-medium">
+                      Page {page + 1} of {totalPages}
+                    </span>
+                    <Button size="sm" variant="outline" disabled={page >= totalPages - 1} onClick={() => { setPage(p => p + 1); setSelectedIds(new Set()); }}>
+                      Next<ChevronRight className="w-4 h-4 ml-1" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
           ) : (
             <div className="text-center py-8 text-muted-foreground">
               <Package className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p>No products in catalog. Upload a CSV to get started.</p>
+              <p>{searchQuery ? "No products match your search." : "No products in catalog. Upload a CSV or add one manually."}</p>
             </div>
           )}
         </CardContent>
@@ -728,9 +1002,9 @@ function WeightsTab() {
   }, [weights]);
 
   const totalWeight = Object.values(localWeights).reduce((a, b) => a + b, 0);
-  // Allow a tiny floating-point tolerance (0.01) around 1.0.
-  const isOverBudget = totalWeight > 1 + 0.01;
-  const isUnderBudget = totalWeight < 1 - 0.01;
+  // Tight tolerance: accept 1.00 ± 0.005 but reject 1.01
+  const isOverBudget = totalWeight > 1.005;
+  const isUnderBudget = totalWeight < 0.995;
   const isValid = !isOverBudget && !isUnderBudget;
 
   const handleSave = () => {

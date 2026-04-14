@@ -526,13 +526,13 @@ export const appRouter = router({
           }
 
           const total = Object.values(effective).reduce((a, b) => a + b, 0);
-          if (total > 1 + 0.01) {
+          if (total > 1.005) {
             throw new TRPCError({
               code: "BAD_REQUEST",
               message: `Weights sum to ${total.toFixed(3)} — must not exceed 1.00`,
             });
           }
-          if (total < 1 - 0.01) {
+          if (total < 0.995) {
             throw new TRPCError({
               code: "BAD_REQUEST",
               message: `Weights sum to ${total.toFixed(3)} — must equal 1.00`,
@@ -626,6 +626,28 @@ export const appRouter = router({
         .mutation(async ({ input }) => {
           const success = await generateProductEmbedding(input.productId);
           return { success };
+        }),
+
+      generateSelectedEmbeddings: adminProcedure
+        .input(z.object({ productIds: z.array(z.number()).min(1).max(500) }))
+        .mutation(async ({ input }) => {
+          const result = await batchGenerateEmbeddings(input.productIds);
+          return result;
+        }),
+
+      deleteMany: adminProcedure
+        .input(z.object({ ids: z.array(z.number()).min(1) }))
+        .mutation(async ({ input }) => {
+          let deleted = 0;
+          for (const id of input.ids) {
+            try {
+              await deleteProduct(id);
+              deleted++;
+            } catch (e) {
+              console.error(`[Admin] Failed to delete product ${id}:`, e);
+            }
+          }
+          return { deleted, total: input.ids.length };
         }),
 
       // Sanity-check what's actually in the product_embeddings table. Picks
