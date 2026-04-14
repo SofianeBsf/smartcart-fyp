@@ -673,6 +673,37 @@ export const appRouter = router({
         };
       }),
 
+      testEmail: adminProcedure
+        .input(z.object({ to: z.string().email() }))
+        .mutation(async ({ input }) => {
+          const { sendVerificationEmail } = await import("./emailService");
+          const smtpUser = process.env.SMTP_USER;
+          const smtpPass = process.env.SMTP_PASS;
+
+          if (!smtpUser || !smtpPass) {
+            return {
+              success: false,
+              error: `SMTP not configured. SMTP_USER=${smtpUser ? "SET" : "MISSING"}, SMTP_PASS=${smtpPass ? "SET" : "MISSING"}`,
+            };
+          }
+
+          try {
+            const result = await sendVerificationEmail(input.to, "Test User", "test-token-12345");
+            return {
+              success: result.success,
+              messageId: result.messageId,
+              error: result.error,
+              config: { smtpUser, baseUrl: process.env.BASE_URL || "not set" },
+            };
+          } catch (err: any) {
+            return {
+              success: false,
+              error: err.message || String(err),
+              config: { smtpUser, baseUrl: process.env.BASE_URL || "not set" },
+            };
+          }
+        }),
+
       generateAllEmbeddings: adminProcedure.mutation(async () => {
         const products = await getAllProducts(10000, 0);
         const productIds = products.map(p => p.id);

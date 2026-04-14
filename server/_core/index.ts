@@ -374,6 +374,62 @@ async function startServer() {
     }
   });
 
+  // ── Diagnostic: test SMTP email (admin only, remove after debugging) ──
+  app.get("/api/auth/test-email", async (req, res) => {
+    const smtpUser = process.env.SMTP_USER;
+    const smtpPass = process.env.SMTP_PASS;
+    const baseUrl = process.env.BASE_URL;
+
+    if (!smtpUser || !smtpPass) {
+      return res.json({
+        success: false,
+        error: "SMTP not configured",
+        detail: {
+          SMTP_USER: smtpUser ? "SET (" + smtpUser + ")" : "MISSING",
+          SMTP_PASS: smtpPass ? "SET (length=" + smtpPass.length + ")" : "MISSING",
+          BASE_URL: baseUrl || "not set",
+        },
+      });
+    }
+
+    try {
+      const nodemailer = await import("nodemailer");
+      const testTransporter = nodemailer.default.createTransport({
+        service: "gmail",
+        auth: { user: smtpUser, pass: smtpPass },
+        connectionTimeout: 15000,
+        greetingTimeout: 15000,
+        socketTimeout: 20000,
+      });
+
+      // Verify SMTP connection first
+      await testTransporter.verify();
+
+      // Send a real test email to the SMTP_USER itself
+      const info = await testTransporter.sendMail({
+        from: `SmartCart Test <${smtpUser}>`,
+        to: smtpUser,
+        subject: "SmartCart SMTP Test - " + new Date().toISOString(),
+        text: "If you see this, SMTP is working!",
+      });
+
+      return res.json({
+        success: true,
+        messageId: info.messageId,
+        sentTo: smtpUser,
+        config: { SMTP_USER: smtpUser, BASE_URL: baseUrl },
+      });
+    } catch (err: any) {
+      return res.json({
+        success: false,
+        error: err.message || String(err),
+        code: err.code,
+        command: err.command,
+        config: { SMTP_USER: smtpUser, SMTP_PASS_LENGTH: smtpPass.length, BASE_URL: baseUrl },
+      });
+    }
+  });
+
   // Purchase confirmation email endpoint
   app.post("/api/auth/send-purchase-email", async (req, res) => {
     try {
