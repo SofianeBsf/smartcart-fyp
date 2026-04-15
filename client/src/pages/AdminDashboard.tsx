@@ -719,11 +719,64 @@ function CatalogTab() {
             </div>
           </div>
           <div className="grid gap-2">
-            <Label>Image URL</Label>
-            <Input value={form.imageUrl} onChange={e => setForm(f => ({ ...f, imageUrl: e.target.value }))} placeholder="https://..." />
-            {form.imageUrl && (
-              <img src={form.imageUrl} alt="Preview" className="w-20 h-20 object-cover rounded border" onError={e => (e.currentTarget.style.display = "none")} />
-            )}
+            <Label>Product Image</Label>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <Input
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const MAX_BYTES = 4 * 1024 * 1024; // 4 MB
+                    if (file.size > MAX_BYTES) {
+                      toast.error("Image is too large (max 4MB). Please choose a smaller file.");
+                      e.currentTarget.value = "";
+                      return;
+                    }
+                    try {
+                      const dataUrl = await new Promise<string>((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = () => resolve(reader.result as string);
+                        reader.onerror = () => reject(reader.error);
+                        reader.readAsDataURL(file);
+                      });
+                      setForm(f => ({ ...f, imageUrl: dataUrl }));
+                      toast.success("Image loaded. Click Save to upload.");
+                    } catch {
+                      toast.error("Failed to read image file.");
+                    }
+                    if (e.currentTarget) e.currentTarget.value = "";
+                  }}
+                  className="flex-1"
+                />
+                {form.imageUrl && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setForm(f => ({ ...f, imageUrl: "" }))}
+                  >
+                    Clear
+                  </Button>
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground">or paste a URL</div>
+              <Input
+                value={form.imageUrl.startsWith("data:") ? "" : form.imageUrl}
+                onChange={e => setForm(f => ({ ...f, imageUrl: e.target.value }))}
+                placeholder="https://..."
+                disabled={form.imageUrl.startsWith("data:")}
+              />
+              {form.imageUrl && (
+                <img
+                  src={form.imageUrl}
+                  alt="Preview"
+                  className="w-24 h-24 object-cover rounded border"
+                  onError={e => (e.currentTarget.style.display = "none")}
+                />
+              )}
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="grid gap-2">

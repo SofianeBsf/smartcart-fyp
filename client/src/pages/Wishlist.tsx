@@ -1,15 +1,61 @@
+import { useEffect } from "react";
 import { useLocation } from "wouter";
 import { useWishlist } from "@/hooks/useWishlist";
 import { useCart } from "@/hooks/useCart";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Heart, ArrowLeft, ShoppingCart, Package } from "lucide-react";
+import { Heart, ArrowLeft, ShoppingCart, Package, Lock } from "lucide-react";
 import Header from "@/components/Header";
+import { toast } from "sonner";
 
 export default function Wishlist() {
   const [, setLocation] = useLocation();
   const { items, removeItem } = useWishlist();
   const { addItem: addToCart } = useCart();
+  const { isAuthenticated, loading: authLoading } = useAuth();
+
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      toast.error("Please sign in to view your wishlist.");
+    }
+  }, [authLoading, isAuthenticated]);
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Header />
+        <div className="container py-12 text-center text-muted-foreground">Loading…</div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Header />
+        <div className="container py-12">
+          <div className="max-w-md mx-auto text-center">
+            <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
+              <Lock className="w-8 h-8 text-muted-foreground" />
+            </div>
+            <h1 className="text-2xl font-bold mb-2">Sign in to view your wishlist</h1>
+            <p className="text-muted-foreground mb-6">
+              Your wishlist is tied to your account. Sign in or create an account to save and access your favourite items.
+            </p>
+            <div className="flex gap-3 justify-center">
+              <Button onClick={() => setLocation(`/login?redirect=${encodeURIComponent("/wishlist")}`)}>
+                Sign in
+              </Button>
+              <Button variant="outline" onClick={() => setLocation(`/register?redirect=${encodeURIComponent("/wishlist")}`)}>
+                Create account
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const handleAddToCart = (item: any) => {
     addToCart({

@@ -3,6 +3,10 @@ import nodemailer from 'nodemailer';
 const SMTP_USER = process.env.SMTP_USER;
 const SMTP_PASS = process.env.SMTP_PASS;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
+// Custom "From" address for Resend. If unset, falls back to onboarding@resend.dev
+// (which on the free tier can ONLY deliver to the Resend account owner's email).
+// Set this to a verified domain sender e.g. "SmartCart <noreply@yourdomain.com>"
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL;
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 
 // Determine email mode: Resend (HTTP) preferred, SMTP fallback
@@ -51,7 +55,7 @@ async function sendViaResend(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: from || `SmartCart <onboarding@resend.dev>`,
+        from: from || RESEND_FROM_EMAIL || `SmartCart <onboarding@resend.dev>`,
         to: [to],
         subject,
         html,
@@ -61,8 +65,13 @@ async function sendViaResend(
     const data = await res.json();
 
     if (!res.ok) {
-      console.error('[Email/Resend] API error:', data);
-      return { success: false, error: data.message || `HTTP ${res.status}` };
+      console.error('[Email/Resend] API error:', res.status, data);
+      // Resend free-tier 403: "You can only send testing emails to your own email address"
+      const msg =
+        data?.message ||
+        data?.error ||
+        `HTTP ${res.status}`;
+      return { success: false, error: msg };
     }
 
     console.log('[Email/Resend] Sent to', to, '- ID:', data.id);

@@ -3,6 +3,8 @@ import { useParams, Link, useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { useCart } from "@/hooks/useCart";
 import { useWishlist } from "@/hooks/useWishlist";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +45,7 @@ export default function ProductDetail() {
   const [addedToCart, setAddedToCart] = useState(false);
   const { items: cartItems, addItem: addToCart, updateQuantity, removeItem } = useCart();
   const { isInWishlist, toggleItem: toggleWishlist } = useWishlist();
+  const { isAuthenticated } = useAuth();
 
   // Fetch product details
   const { data: product, isLoading: productLoading } = trpc.products.getById.useQuery(
@@ -371,6 +374,15 @@ export default function ProductDetail() {
                 size="lg"
                 variant={isInWishlist(product.id) ? "default" : "outline"}
                 onClick={() => {
+                  if (!isAuthenticated) {
+                    toast.error("Please sign in to save items to your wishlist.", {
+                      action: {
+                        label: "Sign in",
+                        onClick: () => setLocation(`/login?redirect=${encodeURIComponent(`/product/${product.id}`)}`),
+                      },
+                    });
+                    return;
+                  }
                   const productImage = productCompat.imageUrl || productCompat.image_url || productCompat.image || "";
                   toggleWishlist({
                     productId: product.id,

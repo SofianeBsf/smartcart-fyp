@@ -578,6 +578,7 @@ export const appRouter = router({
           brand: z.string().optional(),
           features: z.array(z.string()).optional(),
           isFeatured: z.boolean().default(false),
+          asin: z.string().optional(),
         }))
         .mutation(async ({ input }) => {
           const productId = await createProduct(input);
