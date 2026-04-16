@@ -41,6 +41,12 @@ import {
   getEmbeddingCount,
   createEmbedding,
   getAllProductsWithOptionalEmbeddings,
+  deleteCategory,
+  getReviewsByProduct,
+  getReviewStats,
+  createReview,
+  updateReview as updateReviewDb,
+  deleteReview as deleteReviewDb,
 } from "./db";
 import { semanticSearch, generateProductEmbedding, batchGenerateEmbeddings, resetCorpusCache } from "./semanticSearch";
 import {
@@ -564,25 +570,26 @@ export const appRouter = router({
       create: adminProcedure
         .input(z.object({
           title: z.string().min(1),
-          description: z.string().optional(),
-          category: z.string().optional(),
+          description: z.string().min(1),
+          category: z.string().min(1),
           subcategory: z.string().optional(),
-          imageUrl: z.string().optional(),
-          price: z.string().optional(),
+          imageUrl: z.string().min(1),
+          price: z.string().min(1),
           originalPrice: z.string().optional(),
           currency: z.string().default("GBP"),
-          rating: z.string().optional(),
+          rating: z.string().min(1),
           reviewCount: z.number().default(0),
-          availability: z.enum(["in_stock", "low_stock", "out_of_stock"]).default("in_stock"),
-          stockQuantity: z.number().default(100),
-          brand: z.string().optional(),
+          stockQuantity: z.number().min(0),
+          brand: z.string().min(1),
           features: z.array(z.string()).optional(),
           isFeatured: z.boolean().default(false),
           asin: z.string().optional(),
         }))
         .mutation(async ({ input }) => {
-          const productId = await createProduct(input);
-          // Generate embedding for new product
+          // Auto-compute availability from stock
+          const qty = input.stockQuantity;
+          const availability = qty === 0 ? "out_of_stock" : qty <= 20 ? "low_stock" : "in_stock";
+          const productId = await createProduct({ ...input, availability });
           await generateProductEmbedding(productId);
           return { id: productId };
         }),
@@ -599,7 +606,6 @@ export const appRouter = router({
           originalPrice: z.string().optional(),
           rating: z.string().optional(),
           reviewCount: z.number().optional(),
-          availability: z.enum(["in_stock", "low_stock", "out_of_stock"]).optional(),
           stockQuantity: z.number().optional(),
           brand: z.string().optional(),
           features: z.array(z.string()).optional(),
@@ -607,8 +613,12 @@ export const appRouter = router({
         }))
         .mutation(async ({ input }) => {
           const { id, ...updates } = input;
+          // Auto-compute availability when stock quantity is provided
+          if (updates.stockQuantity !== undefined) {
+            const qty = updates.stockQuantity;
+            (updates as any).availability = qty === 0 ? "out_of_stock" : qty <= 20 ? "low_stock" : "in_stock";
+          }
           await updateProduct(id, updates);
-          // Regenerate embedding if text fields changed
           if (updates.title || updates.description || updates.category || updates.features) {
             await generateProductEmbedding(id);
           }
@@ -649,6 +659,13 @@ export const appRouter = router({
             }
           }
           return { deleted, total: input.ids.length };
+        }),
+
+      deleteCategory: adminProcedure
+        .input(z.object({ category: z.string().min(1) }))
+        .mutation(async ({ input }) => {
+          const count = await deleteCategory(input.category);
+          return { uncategorized: count };
         }),
 
       // Sanity-check what's actually in the product_embeddings table. Picks
@@ -757,14 +774,14 @@ export const appRouter = router({
           }
 
           await notifyOwner({
-            title: "🧠 SmartCart: Embedding Generation Complete",
+            title: "🧠 Pick N Take: Embedding Generation Complete",
             content: `Successfully generated embeddings for ${result.success} products.\n\nTotal products: ${productIds.length}\nSuccessful: ${result.success}\nFailed: ${result.failed}`,
           }).catch(err => console.warn("[Notification] Failed to notify owner:", err));
 
           return { ...result, errors };
         } catch (error: any) {
           await notifyOwner({
-            title: "❌ SmartCart: Embedding Generation Failed",
+            title: "❌ Pick N Take: Embedding Generation Failed",
             content: `Failed to generate embeddings.\n\nError: ${error instanceof Error ? error.message : "Unknown error"}`,
           }).catch(err => console.warn("[Notification] Failed to notify owner:", err));
 
@@ -844,7 +861,7 @@ export const appRouter = router({
 
               // Notify owner of successful upload with embeddings
               await notifyOwner({
-                title: "📦 SmartCart: Catalog Upload Complete",
+                title: "📦 Pick N Take: Catalog Upload Complete",
                 content: `Successfully uploaded ${input.products.length} products and generated ${embeddingResult.success} embeddings.${jobId ? `\n\nJob ID: ${jobId}` : ""}\nFailed embeddings: ${embeddingResult.failed}`,
               }).catch(err => console.warn("[Notification] Failed to notify owner:", err));
             } else {
@@ -854,7 +871,7 @@ export const appRouter = router({
 
               // Notify owner of successful upload without embeddings
               await notifyOwner({
-                title: "📦 SmartCart: Catalog Upload Complete",
+                title: "📦 Pick N Take: Catalog Upload Complete",
                 content: `Successfully uploaded ${input.products.length} products.${jobId ? `\n\nJob ID: ${jobId}` : ""}\nNote: Embeddings were not generated. Run 'Regenerate All Embeddings' from the admin dashboard to enable semantic search.`,
               }).catch(err => console.warn("[Notification] Failed to notify owner:", err));
             }
@@ -868,7 +885,7 @@ export const appRouter = router({
 
             // Notify owner of upload failure
             await notifyOwner({
-              title: "❌ SmartCart: Catalog Upload Failed",
+              title: "❌ Pick N Take: Catalog Upload Failed",
               content: `Failed to upload catalog.${jobId ? `\n\nJob ID: ${jobId}` : ""}\nError: ${error instanceof Error ? error.message : "Unknown error"}\n\nPlease check the admin dashboard for details.`,
             }).catch(err => console.warn("[Notification] Failed to notify owner:", err));
 
@@ -1059,6 +1076,58 @@ export const appRouter = router({
         };
       }),
     }),
+  }),
+
+  // ==================== REVIEWS ====================
+  reviews: router({
+    list: publicProcedure
+      .input(z.object({
+        productId: z.number(),
+        limit: z.number().min(1).max(100).default(50),
+        offset: z.number().min(0).default(0),
+      }))
+      .query(async ({ input }) => {
+        return getReviewsByProduct(input.productId, input.limit, input.offset);
+      }),
+
+    stats: publicProcedure
+      .input(z.object({ productId: z.number() }))
+      .query(async ({ input }) => {
+        return getReviewStats(input.productId);
+      }),
+
+    create: protectedProcedure
+      .input(z.object({
+        productId: z.number(),
+        rating: z.number().min(1).max(5),
+        comment: z.string().min(1, "Comment is required"),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+        const id = await createReview({ ...input, userId: ctx.user.id });
+        return { id };
+      }),
+
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        rating: z.number().min(1).max(5).optional(),
+        comment: z.string().min(1).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+        const { id, ...data } = input;
+        await updateReviewDb(id, ctx.user.id, data);
+        return { success: true };
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+        await deleteReviewDb(input.id, ctx.user.id);
+        return { success: true };
+      }),
   }),
 });
 

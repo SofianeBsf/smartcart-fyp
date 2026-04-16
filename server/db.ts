@@ -18,6 +18,7 @@ import {
   wishlistItems, InsertWishlistItem,
   chatConversations, InsertChatConversation,
   chatMessages, InsertChatMessage,
+  reviews, InsertReview,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -410,6 +411,20 @@ async function ensureAllTablesAndColumns(db: any) {
       );
     `);
 
+    // Ensure reviews table
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS reviews (
+        id serial PRIMARY KEY,
+        product_id integer NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        rating integer NOT NULL,
+        comment text NOT NULL,
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now(),
+        CONSTRAINT reviews_user_product_unique UNIQUE (user_id, product_id)
+      );
+    `);
+
     // Ensure chatbot tables
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS chat_conversations (
@@ -758,6 +773,90 @@ export async function getCategories() {
   
   const result = await db.selectDistinct({ category: products.category }).from(products);
   return result.map((r: any) => r.category).filter(Boolean) as string[];
+}
+
+// ==================== REVIEW OPERATIONS ====================
+
+export async function getReviewsByProduct(productId: number, limit = 50, offset = 0) {
+  const db = await getDb();
+  if (!db) return [];
+  const result = await db
+    .select({
+      id: reviews.id,
+      productId: reviews.productId,
+      userId: reviews.userId,
+      rating: reviews.rating,
+      comment: reviews.comment,
+      createdAt: reviews.createdAt,
+      updatedAt: reviews.updatedAt,
+      userName: users.name,
+    })
+    .from(reviews)
+    .innerJoin(users, eq(reviews.userId, users.id))
+    .where(eq(reviews.productId, productId))
+    .orderBy(sql`${reviews.createdAt} DESC`)
+    .limit(limit)
+    .offset(offset);
+  return result;
+}
+
+export async function getReviewStats(productId: number) {
+  const db = await getDb();
+  if (!db) return { average: 0, count: 0, distribution: [0, 0, 0, 0, 0] };
+  const result = await db
+    .select({ rating: reviews.rating })
+    .from(reviews)
+    .where(eq(reviews.productId, productId));
+  if (result.length === 0) return { average: 0, count: 0, distribution: [0, 0, 0, 0, 0] };
+  const distribution = [0, 0, 0, 0, 0];
+  let sum = 0;
+  for (const r of result) {
+    sum += r.rating;
+    if (r.rating >= 1 && r.rating <= 5) distribution[r.rating - 1]++;
+  }
+  return { average: sum / result.length, count: result.length, distribution };
+}
+
+export async function createReview(review: { productId: number; userId: number; rating: number; comment: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // Check for existing review
+  const existing = await db.select({ id: reviews.id }).from(reviews)
+    .where(and(eq(reviews.productId, review.productId), eq(reviews.userId, review.userId)))
+    .limit(1);
+  if (existing.length > 0) throw new Error("You have already reviewed this product");
+  const result = await db.insert(reviews).values(review).returning({ id: reviews.id });
+  return result[0]?.id;
+}
+
+export async function updateReview(id: number, userId: number, data: { rating?: number; comment?: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.update(reviews)
+    .set({ ...data, updatedAt: new Date() })
+    .where(and(eq(reviews.id, id), eq(reviews.userId, userId)))
+    .returning({ id: reviews.id });
+  if (result.length === 0) throw new Error("Review not found or not yours");
+  return result[0].id;
+}
+
+export async function deleteReview(id: number, userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.delete(reviews)
+    .where(and(eq(reviews.id, id), eq(reviews.userId, userId)))
+    .returning({ id: reviews.id });
+  if (result.length === 0) throw new Error("Review not found or not yours");
+}
+
+export async function deleteCategory(category: string) {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db.update(products)
+    .set({ category: null })
+    .where(eq(products.category, category))
+    .returning({ id: products.id });
+  return result.length;
 }
 
 // ==================== EMBEDDING OPERATIONS ====================

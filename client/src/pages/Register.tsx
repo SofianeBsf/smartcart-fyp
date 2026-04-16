@@ -125,7 +125,7 @@ export default function Register() {
             <Sparkles className="w-10 h-10 text-white" />
           </div>
           <div>
-            <h1 className="text-4xl font-bold mb-2">SmartCart</h1>
+            <h1 className="text-4xl font-bold mb-2">Pick N Take</h1>
             <p className="text-lg text-muted-foreground">
               Join us and start shopping smarter
             </p>
@@ -141,7 +141,7 @@ export default function Register() {
               <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center">
                 <Sparkles className="w-4 h-4 text-white" />
               </div>
-              <span className="font-bold text-lg">SmartCart</span>
+              <span className="font-bold text-lg">Pick N Take</span>
             </div>
             <CardTitle className="text-2xl">Create Account</CardTitle>
             <CardDescription>

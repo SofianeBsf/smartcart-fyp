@@ -51,7 +51,7 @@ export default function Home() {
               <span className="text-primary">Intelligent Search</span>
             </h1>
             <p className="text-lg md:text-xl text-muted-foreground mb-8 max-w-2xl mx-auto">
-              SmartCart understands what you're looking for. Search naturally, get explainable results, 
+              Pick N Take understands what you're looking for. Search naturally, get explainable results, 
               and find exactly what you need.
             </p>
 
@@ -107,7 +107,7 @@ export default function Home() {
                 <h3 className="text-lg font-semibold mb-2">Semantic Understanding</h3>
                 <p className="text-muted-foreground">
                   Our AI understands the meaning behind your search, not just keywords. 
-                  "Quiet" and "silent" mean the same thing to SmartCart.
+                  "Quiet" and "silent" mean the same thing to Pick N Take.
                 </p>
               </CardContent>
             </Card>
@@ -284,7 +284,7 @@ export default function Home() {
               <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center">
                 <Sparkles className="w-4 h-4 text-white" />
               </div>
-              <span className="font-semibold">SmartCart</span>
+              <span className="font-semibold">Pick N Take</span>
             </div>
             <p className="text-sm text-muted-foreground">
               Final Year Project - Explainable Semantic Search & Recommendations

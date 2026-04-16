@@ -1,5 +1,5 @@
 /**
- * SmartCart Chatbot Service
+ * Pick N Take Chatbot Service
  *
  * A RAG-powered conversational assistant that:
  * 1. Classifies user intent (product discovery, order help, general FAQ)
@@ -289,7 +289,7 @@ async function buildContext(
 
 // ─── System Prompt ───────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are SmartCart Assistant, a friendly and knowledgeable e-commerce shopping assistant.
+const SYSTEM_PROMPT = `You are Pick N Take Assistant, a friendly and knowledgeable e-commerce shopping assistant.
 
 PERSONALITY:
 - Warm, helpful, and concise
@@ -298,7 +298,7 @@ PERSONALITY:
 - You can use bullet points for product lists but keep descriptions brief
 
 CAPABILITIES:
-- Help users find and compare products from the SmartCart catalog
+- Help users find and compare products from the Pick N Take catalog
 - Answer questions about items in their cart or wishlist
 - Provide general shopping advice and recommendations
 - Explain product features, ratings, and pricing
@@ -307,7 +307,7 @@ RULES:
 - ONLY recommend products that appear in the MATCHING PRODUCTS section below. Never invent products.
 - When listing products, format each as: **Product Name** — £Price (Rating ★) and include the product ID like [ID:123] so the UI can link it.
 - If no products match, say so honestly and suggest the user try different search terms.
-- For order/shipping questions: SmartCart offers standard delivery (3-5 business days) and express delivery (next day). Returns accepted within 30 days.
+- For order/shipping questions: Pick N Take offers standard delivery (3-5 business days) and express delivery (next day). Returns accepted within 30 days.
 - Keep responses under 200 words unless the user asks for detail.
 - Do NOT make up information about products not in the catalog.
 - If the user asks something outside your scope, politely redirect them.
@@ -405,7 +405,7 @@ export async function handleChatMessage(req: ChatRequest): Promise<ChatResponse>
         "\n\nClick on any product to view more details!";
     } else if (intent === "greeting") {
       reply =
-        "Hi there! Welcome to SmartCart. I can help you find products, check your cart, or answer questions about shopping. What are you looking for today?";
+        "Hi there! Welcome to Pick N Take. I can help you find products, check your cart, or answer questions about shopping. What are you looking for today?";
     } else {
       reply =
         "I'm having trouble connecting to my AI brain right now, but I'm still here! Try asking me to find a specific product, and I'll search the catalog for you.";

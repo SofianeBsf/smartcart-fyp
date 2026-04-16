@@ -3,10 +3,9 @@ import nodemailer from 'nodemailer';
 const SMTP_USER = process.env.SMTP_USER;
 const SMTP_PASS = process.env.SMTP_PASS;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
-// Custom "From" address for Resend. If unset, falls back to onboarding@resend.dev
-// (which on the free tier can ONLY deliver to the Resend account owner's email).
-// Set this to a verified domain sender e.g. "SmartCart <noreply@yourdomain.com>"
-const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL;
+// Custom "From" address for Resend. Default: "Pick N Take <noreply@contact.pickntake.com>"
+// Override with RESEND_FROM_EMAIL env var if needed.
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'Pick N Take <noreply@contact.pickntake.com>';
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 
 // Determine email mode: Resend (HTTP) preferred, SMTP fallback
@@ -55,7 +54,7 @@ async function sendViaResend(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: from || RESEND_FROM_EMAIL || `SmartCart <onboarding@resend.dev>`,
+        from: from || RESEND_FROM_EMAIL || `Pick N Take <onboarding@resend.dev>`,
         to: [to],
         subject,
         html,
@@ -99,7 +98,7 @@ async function sendViaSMTP(
   }
   try {
     const info = await transporter.sendMail({
-      from: from || `SmartCart <${SMTP_USER}>`,
+      from: from || `Pick N Take <${SMTP_USER}>`,
       to,
       subject,
       html,
@@ -242,12 +241,12 @@ export async function sendVerificationEmail(
       <body>
         <div class="container">
           <div class="header">
-            <h1>SmartCart</h1>
+            <h1>Pick N Take</h1>
           </div>
           <div class="content">
             <div class="greeting">Hi ${name},</div>
             <div class="message">
-              Welcome to SmartCart! We're excited to have you on board. Please verify your email address to get started.
+              Welcome to Pick N Take! We're excited to have you on board. Please verify your email address to get started.
             </div>
             <a href="${verificationUrl}" class="cta-button">Verify Email</a>
             <div class="alternative-link">
@@ -259,15 +258,15 @@ export async function sendVerificationEmail(
             </div>
           </div>
           <div class="footer">
-            <p>This email was sent by SmartCart</p>
-            <p>&copy; 2026 SmartCart. All rights reserved.</p>
+            <p>This email was sent by Pick N Take</p>
+            <p>&copy; 2026 Pick N Take. All rights reserved.</p>
           </div>
         </div>
       </body>
     </html>
   `;
 
-  return sendEmail(email, 'Verify your SmartCart email address', htmlContent);
+  return sendEmail(email, 'Verify your Pick N Take email address', htmlContent);
 }
 
 /**
@@ -373,12 +372,12 @@ export async function sendPasswordResetEmail(
       <body>
         <div class="container">
           <div class="header">
-            <h1>SmartCart</h1>
+            <h1>Pick N Take</h1>
           </div>
           <div class="content">
             <div class="greeting">Hi ${name},</div>
             <div class="message">
-              We received a request to reset your SmartCart password. Click the button below to set a new password.
+              We received a request to reset your Pick N Take password. Click the button below to set a new password.
             </div>
             <a href="${resetUrl}" class="cta-button">Reset Password</a>
             <div class="alternative-link">
@@ -390,15 +389,15 @@ export async function sendPasswordResetEmail(
             </div>
           </div>
           <div class="footer">
-            <p>This email was sent by SmartCart</p>
-            <p>&copy; 2026 SmartCart. All rights reserved.</p>
+            <p>This email was sent by Pick N Take</p>
+            <p>&copy; 2026 Pick N Take. All rights reserved.</p>
           </div>
         </div>
       </body>
     </html>
   `;
 
-  return sendEmail(email, 'Reset your SmartCart password', htmlContent);
+  return sendEmail(email, 'Reset your Pick N Take password', htmlContent);
 }
 
 /**
@@ -554,7 +553,7 @@ export async function sendPurchaseConfirmationEmail(
       <body>
         <div class="container">
           <div class="header">
-            <h1>SmartCart</h1>
+            <h1>Pick N Take</h1>
           </div>
           <div class="content">
             <div class="greeting">Hi ${name},</div>
@@ -593,8 +592,8 @@ export async function sendPurchaseConfirmationEmail(
             <a href="${BASE_URL}/orders/${orderDetails.orderId}" class="cta-button">View Order Details</a>
           </div>
           <div class="footer">
-            <p>This email was sent by SmartCart</p>
-            <p>&copy; 2026 SmartCart. All rights reserved.</p>
+            <p>This email was sent by Pick N Take</p>
+            <p>&copy; 2026 Pick N Take. All rights reserved.</p>
           </div>
         </div>
       </body>
@@ -603,7 +602,141 @@ export async function sendPurchaseConfirmationEmail(
 
   return sendEmail(
     email,
-    `Order Confirmation - SmartCart Order #${orderDetails.orderId}`,
+    `Order Confirmation - Pick N Take Order #${orderDetails.orderId}`,
     htmlContent,
   );
+}
+
+/**
+ * Sends an account deletion confirmation email with a clickable link
+ */
+export async function sendAccountDeletionEmail(
+  email: string,
+  name: string,
+  token: string
+): Promise<EmailResponse> {
+  if (emailMode === 'none') {
+    console.warn('Email not configured. Account deletion email not sent.');
+    return { success: false, error: 'Email service not configured' };
+  }
+
+  const deletionUrl = `${BASE_URL}/api/auth/confirm-delete-account?token=${token}`;
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+          }
+          .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+          }
+          .header {
+            background: linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%);
+            color: white;
+            padding: 40px 20px;
+            text-align: center;
+          }
+          .header h1 {
+            margin: 0;
+            font-size: 32px;
+            font-weight: 700;
+          }
+          .content {
+            padding: 40px 30px;
+          }
+          .greeting {
+            font-size: 18px;
+            margin-bottom: 20px;
+          }
+          .message {
+            color: #555;
+            margin-bottom: 30px;
+            font-size: 16px;
+          }
+          .warning {
+            background-color: #fef2f2;
+            border-left: 4px solid #dc2626;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+            font-size: 14px;
+            color: #991b1b;
+          }
+          .cta-button {
+            display: inline-block;
+            background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);
+            color: white;
+            padding: 12px 30px;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 600;
+            margin: 20px 0;
+            text-align: center;
+          }
+          .cta-button:hover {
+            background: linear-gradient(135deg, #b91c1c 0%, #dc2626 100%);
+          }
+          .alternative-link {
+            color: #8b5cf6;
+            word-break: break-all;
+            font-size: 14px;
+            margin-top: 15px;
+          }
+          .footer {
+            background-color: #f9f9f9;
+            padding: 20px 30px;
+            font-size: 12px;
+            color: #999;
+            border-top: 1px solid #eee;
+            text-align: center;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Pick N Take</h1>
+          </div>
+          <div class="content">
+            <div class="greeting">Hi ${name},</div>
+            <div class="message">
+              We received a request to permanently delete your Pick N Take account. If you made this request, click the button below to confirm.
+            </div>
+            <div class="warning">
+              <strong>Warning:</strong> This action is irreversible. Deleting your account will permanently remove all your data, including your order history, cart, wishlist, and profile information. This cannot be undone.
+            </div>
+            <a href="${deletionUrl}" class="cta-button">Confirm Deletion</a>
+            <div class="alternative-link">
+              If the button doesn't work, copy and paste this link:<br>
+              ${deletionUrl}
+            </div>
+            <div class="message" style="margin-top: 30px; font-size: 14px; color: #999;">
+              This link will expire in 1 hour. If you did not request account deletion, please ignore this email and your account will remain safe.
+            </div>
+          </div>
+          <div class="footer">
+            <p>This email was sent by Pick N Take</p>
+            <p>&copy; 2026 Pick N Take. All rights reserved.</p>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+
+  return sendEmail(email, 'Confirm Account Deletion - Pick N Take', htmlContent);
 }

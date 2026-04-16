@@ -240,7 +240,7 @@ export function ChatWidget() {
               </div>
               <div>
                 <h3 className="text-sm font-semibold leading-none">
-                  SmartCart Assistant
+                  Pick N Take Assistant
                 </h3>
                 <p className="text-[11px] text-muted-foreground mt-0.5">
                   AI-powered shopping help

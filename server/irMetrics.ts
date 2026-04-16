@@ -8,7 +8,7 @@
  * - MRR (Mean Reciprocal Rank)
  * 
  * These metrics are used to evaluate the quality of the semantic search
- * and ranking system in SmartCart.
+ * and ranking system in Pick N Take.
  */
 
 export interface RelevanceJudgment {

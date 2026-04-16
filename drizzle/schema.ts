@@ -9,6 +9,7 @@ import {
   jsonb,
   boolean,
   integer,
+  unique,
 } from "drizzle-orm/pg-core";
 
 const userRoleEnum = pgEnum("role", ["user", "admin"]);
@@ -286,6 +287,27 @@ export const wishlistItems = pgTable("wishlist_items", {
 
 export type WishlistItem = typeof wishlistItems.$inferSelect;
 export type InsertWishlistItem = typeof wishlistItems.$inferInsert;
+
+// ==================== REVIEWS ====================
+
+/**
+ * Product reviews with 1-5 star ratings.
+ * One review per user per product enforced via unique constraint.
+ */
+export const reviews = pgTable("reviews", {
+  id: serial("id").primaryKey(),
+  productId: integer("product_id").references(() => products.id, { onDelete: "cascade" }).notNull(),
+  userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  rating: integer("rating").notNull(), // 1-5
+  comment: text("comment").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  unique("reviews_user_product_unique").on(table.userId, table.productId),
+]);
+
+export type Review = typeof reviews.$inferSelect;
+export type InsertReview = typeof reviews.$inferInsert;
 
 // ==================== CHATBOT ====================
 

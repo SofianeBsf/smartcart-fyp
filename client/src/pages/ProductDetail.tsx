@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import Header from "@/components/Header";
 import ProductCard from "@/components/ProductCard";
+import ProductReviews from "@/components/ProductReviews";
 
 export default function ProductDetail() {
   const { id } = useParams<{ id: string }>();
@@ -467,6 +468,13 @@ export default function ProductDetail() {
             )}
           </div>
         </div>
+
+        <Separator className="my-8" />
+
+        {/* Reviews */}
+        <section className="mb-12">
+          <ProductReviews productId={productId} />
+        </section>
 
         <Separator className="my-8" />
 

@@ -102,7 +102,8 @@ export default function Login() {
         localStorage.removeItem("rememberEmail");
       }
 
-      toast.success(`Welcome back, ${data.user?.name || ""}!`);
+      const greeting = data.isFirstLogin ? "Welcome" : "Welcome back";
+      toast.success(`${greeting}, ${data.user?.name || ""}!`);
       setLocation(redirectTo);
     } catch (err: any) {
       const msg = err.message || "Login failed. Please try again.";
@@ -121,7 +122,7 @@ export default function Login() {
             <Sparkles className="w-10 h-10 text-white" />
           </div>
           <div>
-            <h1 className="text-4xl font-bold mb-2">SmartCart</h1>
+            <h1 className="text-4xl font-bold mb-2">Pick N Take</h1>
             <p className="text-lg text-muted-foreground">
               Discover products with intelligent search
             </p>
@@ -136,7 +137,7 @@ export default function Login() {
               <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center">
                 <Sparkles className="w-4 h-4 text-white" />
               </div>
-              <span className="font-bold text-lg">SmartCart</span>
+              <span className="font-bold text-lg">Pick N Take</span>
             </div>
             <CardTitle className="text-2xl">Welcome Back</CardTitle>
             <CardDescription>

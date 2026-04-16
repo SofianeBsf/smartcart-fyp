@@ -70,7 +70,7 @@ export default function ForgotPassword() {
             <Sparkles className="w-10 h-10 text-white" />
           </div>
           <div>
-            <h1 className="text-4xl font-bold mb-2">SmartCart</h1>
+            <h1 className="text-4xl font-bold mb-2">Pick N Take</h1>
             <p className="text-lg text-muted-foreground">
               Reset your password and regain access
             </p>
@@ -86,7 +86,7 @@ export default function ForgotPassword() {
               <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center">
                 <Sparkles className="w-4 h-4 text-white" />
               </div>
-              <span className="font-bold text-lg">SmartCart</span>
+              <span className="font-bold text-lg">Pick N Take</span>
             </div>
             <CardTitle className="text-2xl">Reset Password</CardTitle>
             <CardDescription>
@@ -104,7 +104,7 @@ export default function ForgotPassword() {
                 </Alert>
 
                 <p className="text-sm text-muted-foreground">
-                  Check your inbox for an email from SmartCart with instructions to reset your password.
+                  Check your inbox for an email from Pick N Take with instructions to reset your password.
                   The link will expire in 1 hour.
                 </p>
 

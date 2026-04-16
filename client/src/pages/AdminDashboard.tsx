@@ -450,10 +450,16 @@ function CatalogTab() {
   // Form state for add/edit
   const emptyForm = {
     title: "", description: "", category: "", brand: "",
-    price: "", imageUrl: "", rating: "", availability: "in_stock" as const,
+    price: "", imageUrl: "", rating: "",
     stockQuantity: "100", asin: "",
   };
   const [form, setForm] = useState(emptyForm);
+  const [isCreatingCategory, setIsCreatingCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
+
+  // Fetch categories
+  const { data: categories = [] } = trpc.products.categories.useQuery();
 
   const { data: productList, isLoading } = trpc.products.list.useQuery({
     limit: PAGE_SIZE,
@@ -505,6 +511,15 @@ function CatalogTab() {
       utils.products.list.invalidate();
     },
     onError: (error) => toast.error(`Delete failed: ${error.message}`),
+  });
+
+  const deleteCategoryMutation = trpc.admin.products.deleteCategory.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Category deleted. ${data.uncategorized} product(s) uncategorized.`);
+      utils.products.categories.invalidate();
+      utils.products.list.invalidate();
+    },
+    onError: (error) => toast.error(`Delete category failed: ${error.message}`),
   });
 
   const generateSelected = trpc.admin.products.generateSelectedEmbeddings.useMutation({
@@ -565,42 +580,48 @@ function CatalogTab() {
       price: product.price || "",
       imageUrl: product.imageUrl || "",
       rating: product.rating || "",
-      availability: product.availability || "in_stock",
       stockQuantity: String(product.stockQuantity ?? 100),
       asin: product.asin || "",
     });
+    setIsCreatingCategory(false);
+    setNewCategoryName("");
     setEditingProduct(product);
   };
 
   const handleSave = () => {
-    if (!form.title.trim()) {
-      toast.error("Title is required");
-      return;
-    }
+    const finalCategory = isCreatingCategory ? newCategoryName.trim() : form.category;
+    if (!form.title.trim()) { toast.error("Title is required"); return; }
+    if (!form.description.trim()) { toast.error("Description is required"); return; }
+    if (!finalCategory) { toast.error("Category is required"); return; }
+    if (!form.brand.trim()) { toast.error("Brand is required"); return; }
+    if (!form.price || parseFloat(form.price) <= 0) { toast.error("Price must be greater than 0"); return; }
+    if (!form.imageUrl) { toast.error("Product image is required"); return; }
+    if (!form.rating || parseFloat(form.rating) < 0 || parseFloat(form.rating) > 5) { toast.error("Rating must be between 0 and 5"); return; }
+    const stockQty = parseInt(form.stockQuantity);
+    if (isNaN(stockQty) || stockQty < 0) { toast.error("Stock quantity must be 0 or more"); return; }
+
     if (editingProduct) {
       updateProduct.mutate({
         id: editingProduct.id,
         title: form.title.trim(),
-        description: form.description || undefined,
-        category: form.category || undefined,
-        brand: form.brand || undefined,
-        price: form.price || undefined,
-        imageUrl: form.imageUrl || undefined,
-        rating: form.rating || undefined,
-        availability: form.availability as any,
-        stockQuantity: parseInt(form.stockQuantity) || 100,
+        description: form.description.trim(),
+        category: finalCategory,
+        brand: form.brand.trim(),
+        price: form.price,
+        imageUrl: form.imageUrl,
+        rating: form.rating,
+        stockQuantity: stockQty,
       });
     } else {
       createProduct.mutate({
         title: form.title.trim(),
-        description: form.description || undefined,
-        category: form.category || undefined,
-        brand: form.brand || undefined,
-        price: form.price || undefined,
-        imageUrl: form.imageUrl || undefined,
-        rating: form.rating || undefined,
-        availability: form.availability as any,
-        stockQuantity: parseInt(form.stockQuantity) || 100,
+        description: form.description.trim(),
+        category: finalCategory,
+        brand: form.brand.trim(),
+        price: form.price,
+        imageUrl: form.imageUrl,
+        rating: form.rating,
+        stockQuantity: stockQty,
         asin: form.asin || undefined,
       });
     }
@@ -691,31 +712,80 @@ function CatalogTab() {
             <Input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="Product title" />
           </div>
           <div className="grid gap-2">
-            <Label>Description</Label>
+            <Label>Description *</Label>
             <Input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Product description" />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="grid gap-2">
-              <Label>Category</Label>
-              <Input value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} placeholder="e.g. Electronics" />
+              <div className="flex items-center justify-between">
+                <Label>Category *</Label>
+                <button type="button" className="text-xs text-primary hover:underline" onClick={() => setShowCategoryManager(true)}>
+                  Manage
+                </button>
+              </div>
+              {isCreatingCategory ? (
+                <div className="flex gap-2">
+                  <Input
+                    value={newCategoryName}
+                    onChange={e => setNewCategoryName(e.target.value)}
+                    placeholder="New category name"
+                    className="flex-1"
+                  />
+                  <Button type="button" variant="ghost" size="sm" onClick={() => { setIsCreatingCategory(false); setNewCategoryName(""); }}>
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <Select
+                  value={form.category}
+                  onValueChange={v => {
+                    if (v === "__create_new__") {
+                      setIsCreatingCategory(true);
+                      setNewCategoryName("");
+                      setForm(f => ({ ...f, category: "" }));
+                    } else {
+                      setForm(f => ({ ...f, category: v }));
+                    }
+                  }}
+                >
+                  <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
+                  <SelectContent>
+                    {categories.map((cat: string) => (
+                      <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                    ))}
+                    <SelectItem value="__create_new__" className="text-primary font-medium">
+                      + Create new category...
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
             </div>
             <div className="grid gap-2">
-              <Label>Brand</Label>
+              <Label>Brand *</Label>
               <Input value={form.brand} onChange={e => setForm(f => ({ ...f, brand: e.target.value }))} placeholder="e.g. Samsung" />
             </div>
           </div>
           <div className="grid grid-cols-3 gap-4">
             <div className="grid gap-2">
-              <Label>Price (£)</Label>
+              <Label>Price (£) *</Label>
               <Input type="number" step="0.01" min="0" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} placeholder="29.99" />
             </div>
             <div className="grid gap-2">
-              <Label>Rating</Label>
+              <Label>Rating (0-5) *</Label>
               <Input type="number" step="0.1" min="0" max="5" value={form.rating} onChange={e => setForm(f => ({ ...f, rating: e.target.value }))} placeholder="4.5" />
             </div>
             <div className="grid gap-2">
-              <Label>Stock Qty</Label>
+              <Label>Stock Qty *</Label>
               <Input type="number" min="0" value={form.stockQuantity} onChange={e => setForm(f => ({ ...f, stockQuantity: e.target.value }))} />
+              <p className="text-xs text-muted-foreground">
+                {(() => {
+                  const qty = parseInt(form.stockQuantity);
+                  if (isNaN(qty)) return "";
+                  if (qty === 0) return "→ Out of Stock";
+                  if (qty <= 20) return "→ Low Stock";
+                  return "→ In Stock";
+                })()}
+              </p>
             </div>
           </div>
           <div className="grid gap-2">
@@ -778,25 +848,12 @@ function CatalogTab() {
               )}
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          {!editingProduct && (
             <div className="grid gap-2">
-              <Label>Availability</Label>
-              <Select value={form.availability} onValueChange={v => setForm(f => ({ ...f, availability: v as any }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="in_stock">In Stock</SelectItem>
-                  <SelectItem value="low_stock">Low Stock</SelectItem>
-                  <SelectItem value="out_of_stock">Out of Stock</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label>ASIN (optional)</Label>
+              <Input value={form.asin} onChange={e => setForm(f => ({ ...f, asin: e.target.value }))} placeholder="B0..." />
             </div>
-            {!editingProduct && (
-              <div className="grid gap-2">
-                <Label>ASIN (optional)</Label>
-                <Input value={form.asin} onChange={e => setForm(f => ({ ...f, asin: e.target.value }))} placeholder="B0..." />
-              </div>
-            )}
-          </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => { setShowAddDialog(false); setEditingProduct(null); setForm(emptyForm); }}>
@@ -810,9 +867,51 @@ function CatalogTab() {
     </Dialog>
   );
 
+  // Category management dialog
+  const categoryManagerDialog = (
+    <Dialog open={showCategoryManager} onOpenChange={setShowCategoryManager}>
+      <DialogContent className="sm:max-w-[400px]">
+        <DialogHeader>
+          <DialogTitle>Manage Categories</DialogTitle>
+          <DialogDescription>
+            Deleting a category will uncategorize all products in that category.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2 max-h-[300px] overflow-y-auto">
+          {categories.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">No categories yet.</p>
+          ) : (
+            categories.map((cat: string) => (
+              <div key={cat} className="flex items-center justify-between p-2 border rounded">
+                <span className="text-sm">{cat}</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-destructive hover:text-destructive"
+                  onClick={() => {
+                    if (confirm(`Delete category "${cat}"? All products in this category will become uncategorized.`)) {
+                      deleteCategoryMutation.mutate({ category: cat });
+                    }
+                  }}
+                  disabled={deleteCategoryMutation.isPending}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            ))
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setShowCategoryManager(false)}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
   return (
     <div className="space-y-6">
       {productFormDialog}
+      {categoryManagerDialog}
 
       {/* Upload Section */}
       <Card>

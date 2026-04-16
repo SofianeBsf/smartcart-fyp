@@ -11,8 +11,10 @@ import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
 import * as db from "../db";
 import { nanoid } from "nanoid";
-import { sendVerificationEmail, sendPasswordResetEmail, sendPurchaseConfirmationEmail } from "../emailService";
-import { randomBytes } from "crypto";
+import { sendVerificationEmail, sendPasswordResetEmail, sendPurchaseConfirmationEmail, sendAccountDeletionEmail } from "../emailService";
+import crypto, { randomBytes } from "crypto";
+import { users } from "../../drizzle/schema";
+import { eq } from "drizzle-orm";
 
 // bcryptjs for password hashing - loaded dynamically
 let bcrypt: any = null;
@@ -291,6 +293,13 @@ async function startServer() {
         });
       }
 
+      // Detect first login: lastSignedIn ≈ createdAt means user has never
+      // actually logged in (both are set on registration).
+      const isFirstLogin =
+        user.createdAt &&
+        user.lastSignedIn &&
+        Math.abs(user.lastSignedIn.getTime() - user.createdAt.getTime()) < 60_000; // within 1 min
+
       await db.upsertUser({ openId: user.openId, lastSignedIn: new Date() });
 
       const sessionToken = await sdk.createSessionToken(user.openId, {
@@ -304,6 +313,7 @@ async function startServer() {
       return res.json({
         success: true,
         user: { id: user.id, name: user.name, email: user.email, role: user.role },
+        isFirstLogin: !!isFirstLogin,
       });
     } catch (e) {
       console.error("[Login] failed", e);
@@ -400,14 +410,14 @@ async function startServer() {
     try {
       if (mode === "resend") {
         const recipient = toParam || smtpUser || "test@example.com";
-        const fromAddress = resendFrom || "SmartCart Test <onboarding@resend.dev>";
+        const fromAddress = resendFrom || "Pick N Take Test <onboarding@resend.dev>";
         const r = await fetch("https://api.resend.com/emails", {
           method: "POST",
           headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
           body: JSON.stringify({
             from: fromAddress,
             to: [recipient],
-            subject: "SmartCart Email Test - " + new Date().toISOString(),
+            subject: "Pick N Take Email Test - " + new Date().toISOString(),
             html: "<p>If you see this, Resend email is working!</p>",
           }),
         });
@@ -457,14 +467,131 @@ async function startServer() {
         });
         await t.verify();
         const info = await t.sendMail({
-          from: `SmartCart Test <${smtpUser}>`, to: smtpUser!,
-          subject: "SmartCart SMTP Test - " + new Date().toISOString(),
+          from: `Pick N Take Test <${smtpUser}>`, to: smtpUser!,
+          subject: "Pick N Take SMTP Test - " + new Date().toISOString(),
           text: "If you see this, SMTP is working!",
         });
         return res.json({ success: true, mode, messageId: info.messageId, sentTo: smtpUser, config: { BASE_URL: baseUrl } });
       }
     } catch (err: any) {
       return res.json({ success: false, mode, error: err.message || String(err), code: err.code });
+    }
+  });
+
+  // ==================== DELETE ACCOUNT ENDPOINTS ====================
+
+  // Request account deletion — sends confirmation email
+  app.post("/api/auth/request-delete-account", async (req, res) => {
+    try {
+      if (!bcrypt) {
+        return res.status(500).json({ error: "Server auth not ready. Try again later." });
+      }
+
+      const cookies = req.headers.cookie || "";
+      const cookieMap = new Map(
+        cookies.split("; ").map((c) => {
+          const [key, ...rest] = c.split("=");
+          return [key, rest.join("=")];
+        })
+      );
+
+      const sessionToken = cookieMap.get(COOKIE_NAME);
+      if (!sessionToken) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const session = await sdk.verifySession(sessionToken);
+      if (!session) {
+        return res.status(401).json({ error: "Invalid session" });
+      }
+
+      const user = await db.getUserByOpenId(session.openId);
+      if (!user) {
+        return res.status(401).json({ error: "User not found" });
+      }
+
+      const { password } = req.body;
+      if (!password) {
+        return res.status(400).json({ error: "Password is required" });
+      }
+
+      if (!user.passwordHash) {
+        return res.status(400).json({ error: "Account does not use password authentication" });
+      }
+
+      const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+      if (!isPasswordValid) {
+        return res.status(401).json({ error: "Incorrect password" });
+      }
+
+      // Create HMAC-signed deletion token
+      const expiresAt = Date.now() + 3600000; // 1 hour
+      const hmac = crypto
+        .createHmac("sha256", process.env.JWT_SECRET || "fallback")
+        .update(`delete:${user.id}:${expiresAt}`)
+        .digest("hex");
+      const token = `${user.id}:${expiresAt}:${hmac}`;
+
+      // Send confirmation email
+      await sendAccountDeletionEmail(user.email!, user.name || "User", token);
+
+      return res.json({ success: true, message: "Confirmation email sent" });
+    } catch (e) {
+      console.error("[RequestDeleteAccount] failed", e);
+      return res.status(500).json({ error: "Failed to request account deletion" });
+    }
+  });
+
+  // Confirm account deletion — verifies token and deletes user
+  app.get("/api/auth/confirm-delete-account", async (req, res) => {
+    try {
+      const token = req.query.token as string;
+      if (!token) {
+        return res.status(400).json({ error: "Token is required" });
+      }
+
+      const parts = token.split(":");
+      if (parts.length !== 3) {
+        return res.status(400).json({ error: "Invalid token format" });
+      }
+
+      const [userIdStr, expiresAtStr, providedHmac] = parts;
+      const userId = parseInt(userIdStr, 10);
+      const expiresAt = parseInt(expiresAtStr, 10);
+
+      if (isNaN(userId) || isNaN(expiresAt)) {
+        return res.status(400).json({ error: "Invalid token" });
+      }
+
+      // Check expiry
+      if (Date.now() > expiresAt) {
+        return res.status(400).json({ error: "Token has expired" });
+      }
+
+      // Verify HMAC
+      const expectedHmac = crypto
+        .createHmac("sha256", process.env.JWT_SECRET || "fallback")
+        .update(`delete:${userId}:${expiresAt}`)
+        .digest("hex");
+
+      if (providedHmac !== expectedHmac) {
+        return res.status(400).json({ error: "Invalid token" });
+      }
+
+      // Delete user from DB
+      const dbInstance = await db.getDb();
+      if (!dbInstance) return res.status(500).json({ error: "Database not available" });
+      await dbInstance.delete(users).where(eq(users.id, userId));
+
+      // Clear session cookie
+      const cookieOptions = getSessionCookieOptions(req);
+      res.clearCookie(COOKIE_NAME, cookieOptions);
+
+      // Redirect to homepage with deleted flag
+      return res.redirect(302, "/?deleted=1");
+    } catch (e) {
+      console.error("[ConfirmDeleteAccount] failed", e);
+      return res.status(500).json({ error: "Failed to delete account" });
     }
   });
 

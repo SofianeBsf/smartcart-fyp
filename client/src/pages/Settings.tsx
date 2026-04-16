@@ -6,7 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { ArrowLeft, User, Lock, AlertCircle, CheckCircle } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { ArrowLeft, User, Lock, AlertCircle, CheckCircle, Trash2 } from "lucide-react";
+import { PasswordInput } from "@/components/ui/password-input";
 import Header from "@/components/Header";
 import { toast } from "sonner";
 
@@ -23,6 +25,11 @@ export default function Settings() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordLoading, setPasswordLoading] = useState(false);
+
+  // Delete account
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   useEffect(() => {
     if (user?.name) {
@@ -301,6 +308,92 @@ export default function Settings() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Danger Zone */}
+        <Card className="mt-6 border-destructive/50">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <Trash2 className="w-5 h-5 text-destructive" />
+              <CardTitle className="text-lg text-destructive">Danger Zone</CardTitle>
+            </div>
+            <CardDescription>
+              Permanently delete your account and all associated data. This action cannot be undone.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button
+              variant="destructive"
+              onClick={() => setShowDeleteDialog(true)}
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Delete My Account
+            </Button>
+          </CardContent>
+        </Card>
+
+        {/* Delete Account Confirmation Dialog */}
+        <Dialog open={showDeleteDialog} onOpenChange={(open) => {
+          if (!open) { setShowDeleteDialog(false); setDeletePassword(""); }
+        }}>
+          <DialogContent className="sm:max-w-[425px]">
+            <DialogHeader>
+              <DialogTitle className="text-destructive">Delete Account</DialogTitle>
+              <DialogDescription>
+                This will permanently delete your account and all data. A confirmation email will be sent to <strong>{user.email}</strong>. You must click the link in that email to confirm.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  This action is irreversible. Your account, order history, reviews, and all personal data will be permanently removed.
+                </AlertDescription>
+              </Alert>
+              <div className="space-y-2">
+                <label htmlFor="deletePassword" className="text-sm font-medium">
+                  Enter your password to confirm
+                </label>
+                <PasswordInput
+                  id="deletePassword"
+                  placeholder="Your current password"
+                  value={deletePassword}
+                  onChange={(e) => setDeletePassword(e.target.value)}
+                  disabled={deleteLoading}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => { setShowDeleteDialog(false); setDeletePassword(""); }}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={deleteLoading || !deletePassword}
+                onClick={async () => {
+                  setDeleteLoading(true);
+                  try {
+                    const response = await fetch("/api/auth/request-delete-account", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ password: deletePassword }),
+                    });
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || "Failed to request deletion");
+                    toast.success("Check your email to confirm account deletion.", { duration: 8000 });
+                    setShowDeleteDialog(false);
+                    setDeletePassword("");
+                  } catch (err: any) {
+                    toast.error(err.message || "Failed to request account deletion");
+                  } finally {
+                    setDeleteLoading(false);
+                  }
+                }}
+              >
+                {deleteLoading ? "Sending..." : "Send Confirmation Email"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );
