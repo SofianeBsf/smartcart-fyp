@@ -54,7 +54,7 @@ async function sendViaResend(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: from || RESEND_FROM_EMAIL || `Pick N Take <onboarding@resend.dev>`,
+        from: from || `Pick N Take <${RESEND_FROM_EMAIL}>`,
         to: [to],
         subject,
         html,
