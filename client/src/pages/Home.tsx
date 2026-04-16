@@ -281,10 +281,7 @@ export default function Home() {
         <div className="container">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center">
-                <Sparkles className="w-4 h-4 text-white" />
-              </div>
-              <span className="font-semibold">Pick N Take</span>
+              <img src="/pickntake-logo.svg" alt="Pick N Take" className="h-8" />
             </div>
             <p className="text-sm text-muted-foreground">
               Final Year Project - Explainable Semantic Search & Recommendations

@@ -15,7 +15,6 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Search,
-  Sparkles,
   User,
   Settings,
   LogOut,
@@ -54,10 +53,7 @@ export default function Header() {
           }}
           className="flex items-center gap-2 shrink-0"
         >
-          <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center">
-            <Sparkles className="w-4 h-4 text-white" />
-          </div>
-          <span className="font-bold text-xl hidden sm:inline">Pick N Take</span>
+          <img src="/pickntake-logo.svg" alt="Pick N Take" className="h-8" />
         </a>
 
         {/* Search Bar */}

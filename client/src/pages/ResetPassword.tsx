@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Sparkles, AlertCircle } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 
 export default function ResetPassword() {
@@ -102,9 +102,7 @@ export default function ResetPassword() {
       {/* Left side - Branding */}
       <div className="hidden lg:flex lg:w-1/2 gradient-hero flex-col items-center justify-center p-12">
         <div className="text-center space-y-6">
-          <div className="w-20 h-20 rounded-2xl gradient-primary flex items-center justify-center mx-auto">
-            <Sparkles className="w-10 h-10 text-white" />
-          </div>
+          <img src="/pickntake-icon.svg" alt="Pick N Take" className="w-20 h-20 mx-auto" />
           <div>
             <h1 className="text-4xl font-bold mb-2">Pick N Take</h1>
             <p className="text-lg text-muted-foreground">
@@ -119,10 +117,7 @@ export default function ResetPassword() {
         <Card className="w-full max-w-md border-0 shadow-lg md:shadow-none md:border">
           <CardHeader className="space-y-2">
             <div className="flex lg:hidden items-center gap-2 mb-4">
-              <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center">
-                <Sparkles className="w-4 h-4 text-white" />
-              </div>
-              <span className="font-bold text-lg">Pick N Take</span>
+              <img src="/pickntake-logo.svg" alt="Pick N Take" className="h-8" />
             </div>
             <CardTitle className="text-2xl">Reset Password</CardTitle>
             <CardDescription>
