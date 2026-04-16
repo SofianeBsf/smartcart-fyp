@@ -180,6 +180,15 @@
   }
 }
 
+/* Hide the browser's native password reveal toggle (Edge / Chrome) */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear,
+input[type="password"]::-webkit-credentials-auto-fill-button,
+input::-webkit-credentials-auto-fill-button {
+  display: none !important;
+  -webkit-appearance: none;
+}
+
 /* Pick N Take Custom Styles */
 .search-highlight {
   @apply bg-primary/20 text-primary font-medium px-0.5 rounded;

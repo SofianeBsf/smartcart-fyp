@@ -446,6 +446,7 @@ function CatalogTab() {
   // Dialog states
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [editingProduct, setEditingProduct] = useState<any | null>(null);
+  const [deletingProduct, setDeletingProduct] = useState<any | null>(null);
 
   // Form state for add/edit
   const emptyForm = {
@@ -699,14 +700,15 @@ function CatalogTab() {
         if (!open) { setShowAddDialog(false); setEditingProduct(null); setForm(emptyForm); }
       }}
     >
-      <DialogContent className="sm:max-w-[550px] max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[550px] max-h-[85vh] flex flex-col overflow-hidden">
+        <DialogHeader className="shrink-0 border-b pb-4">
           <DialogTitle>{editingProduct ? "Edit Product" : "Add Product"}</DialogTitle>
           <DialogDescription>
             {editingProduct ? "Update the product details below." : "Fill in the product details. Embedding will be generated automatically."}
           </DialogDescription>
         </DialogHeader>
-        <div className="grid gap-4 py-2">
+        <div className="flex-1 overflow-y-auto overscroll-contain px-1 py-2">
+        <div className="grid gap-4">
           <div className="grid gap-2">
             <Label>Title *</Label>
             <Input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="Product title" />
@@ -715,55 +717,53 @@ function CatalogTab() {
             <Label>Description *</Label>
             <Input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Product description" />
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between">
-                <Label>Category *</Label>
-                <button type="button" className="text-xs text-primary hover:underline" onClick={() => setShowCategoryManager(true)}>
-                  Manage
-                </button>
+          <div className="grid gap-2">
+            <div className="flex items-center gap-2">
+              <Label>Category *</Label>
+              <button type="button" className="text-xs text-primary hover:underline" onClick={() => setShowCategoryManager(true)}>
+                Manage
+              </button>
+            </div>
+            {isCreatingCategory ? (
+              <div className="flex gap-2">
+                <Input
+                  value={newCategoryName}
+                  onChange={e => setNewCategoryName(e.target.value)}
+                  placeholder="New category name"
+                  className="flex-1"
+                />
+                <Button type="button" variant="ghost" size="sm" onClick={() => { setIsCreatingCategory(false); setNewCategoryName(""); }}>
+                  Cancel
+                </Button>
               </div>
-              {isCreatingCategory ? (
-                <div className="flex gap-2">
-                  <Input
-                    value={newCategoryName}
-                    onChange={e => setNewCategoryName(e.target.value)}
-                    placeholder="New category name"
-                    className="flex-1"
-                  />
-                  <Button type="button" variant="ghost" size="sm" onClick={() => { setIsCreatingCategory(false); setNewCategoryName(""); }}>
-                    Cancel
-                  </Button>
-                </div>
-              ) : (
-                <Select
-                  value={form.category}
-                  onValueChange={v => {
-                    if (v === "__create_new__") {
-                      setIsCreatingCategory(true);
-                      setNewCategoryName("");
-                      setForm(f => ({ ...f, category: "" }));
-                    } else {
-                      setForm(f => ({ ...f, category: v }));
-                    }
-                  }}
-                >
-                  <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
-                  <SelectContent>
-                    {categories.map((cat: string) => (
-                      <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-                    ))}
-                    <SelectItem value="__create_new__" className="text-primary font-medium">
-                      + Create new category...
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
-            <div className="grid gap-2">
-              <Label>Brand *</Label>
-              <Input value={form.brand} onChange={e => setForm(f => ({ ...f, brand: e.target.value }))} placeholder="e.g. Samsung" />
-            </div>
+            ) : (
+              <Select
+                value={form.category}
+                onValueChange={v => {
+                  if (v === "__create_new__") {
+                    setIsCreatingCategory(true);
+                    setNewCategoryName("");
+                    setForm(f => ({ ...f, category: "" }));
+                  } else {
+                    setForm(f => ({ ...f, category: v }));
+                  }
+                }}
+              >
+                <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
+                <SelectContent>
+                  {categories.map((cat: string) => (
+                    <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                  ))}
+                  <SelectItem value="__create_new__" className="text-primary font-medium">
+                    + Create new category...
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+          <div className="grid gap-2">
+            <Label>Brand *</Label>
+            <Input value={form.brand} onChange={e => setForm(f => ({ ...f, brand: e.target.value }))} placeholder="e.g. Samsung" />
           </div>
           <div className="grid grid-cols-3 gap-4">
             <div className="grid gap-2">
@@ -777,15 +777,17 @@ function CatalogTab() {
             <div className="grid gap-2">
               <Label>Stock Qty *</Label>
               <Input type="number" min="0" value={form.stockQuantity} onChange={e => setForm(f => ({ ...f, stockQuantity: e.target.value }))} />
-              <p className="text-xs text-muted-foreground">
-                {(() => {
-                  const qty = parseInt(form.stockQuantity);
-                  if (isNaN(qty)) return "";
-                  if (qty === 0) return "→ Out of Stock";
-                  if (qty <= 20) return "→ Low Stock";
-                  return "→ In Stock";
-                })()}
-              </p>
+              {(() => {
+                const qty = parseInt(form.stockQuantity);
+                if (isNaN(qty)) return null;
+                const label = qty === 0 ? "Out of Stock" : qty <= 20 ? "Low Stock" : "In Stock";
+                const color = qty === 0 ? "text-red-600 bg-red-50 border-red-200" : qty <= 20 ? "text-yellow-600 bg-yellow-50 border-yellow-200" : "text-green-600 bg-green-50 border-green-200";
+                return (
+                  <span className={`inline-flex items-center text-xs font-medium px-2 py-0.5 rounded-full border ${color}`}>
+                    {label}
+                  </span>
+                );
+              })()}
             </div>
           </div>
           <div className="grid gap-2">
@@ -855,7 +857,8 @@ function CatalogTab() {
             </div>
           )}
         </div>
-        <DialogFooter>
+        </div>
+        <DialogFooter className="shrink-0 border-t pt-4">
           <Button variant="outline" onClick={() => { setShowAddDialog(false); setEditingProduct(null); setForm(emptyForm); }}>
             Cancel
           </Button>
@@ -908,10 +911,42 @@ function CatalogTab() {
     </Dialog>
   );
 
+  // Delete confirmation dialog
+  const deleteConfirmDialog = (
+    <Dialog open={!!deletingProduct} onOpenChange={(open) => { if (!open) setDeletingProduct(null); }}>
+      <DialogContent className="sm:max-w-[400px]">
+        <DialogHeader>
+          <DialogTitle>Delete Product</DialogTitle>
+          <DialogDescription>
+            Are you sure you want to delete <span className="font-medium text-foreground">"{deletingProduct?.title}"</span>? This action cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button variant="outline" onClick={() => setDeletingProduct(null)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => {
+              if (deletingProduct) {
+                deleteProduct.mutate({ id: deletingProduct.id });
+                setDeletingProduct(null);
+              }
+            }}
+            disabled={deleteProduct.isPending}
+          >
+            {deleteProduct.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Deleting...</> : "Delete"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
   return (
     <div className="space-y-6">
       {productFormDialog}
       {categoryManagerDialog}
+      {deleteConfirmDialog}
 
       {/* Upload Section */}
       <Card>
@@ -1068,11 +1103,7 @@ function CatalogTab() {
                             size="icon"
                             variant="ghost"
                             className="h-8 w-8 text-destructive hover:text-destructive"
-                            onClick={() => {
-                              if (confirm(`Delete "${product.title}"?`)) {
-                                deleteProduct.mutate({ id: product.id });
-                              }
-                            }}
+                            onClick={() => setDeletingProduct(product)}
                           >
                             <Trash2 className="w-4 h-4" />
                           </Button>

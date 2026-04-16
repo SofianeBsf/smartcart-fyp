@@ -1,51 +1,28 @@
-import nodemailer from 'nodemailer';
-
-const SMTP_USER = process.env.SMTP_USER;
-const SMTP_PASS = process.env.SMTP_PASS;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
-// Custom "From" address for Resend. Default: "Pick N Take <noreply@contact.pickntake.com>"
-// Override with RESEND_FROM_EMAIL env var if needed.
+// "From" address for Resend. Default: "Pick N Take <noreply@contact.pickntake.com>"
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'Pick N Take <noreply@contact.pickntake.com>';
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 
-// Determine email mode: Resend (HTTP) preferred, SMTP fallback
-const emailMode: 'resend' | 'smtp' | 'none' =
-  RESEND_API_KEY ? 'resend' :
-  (SMTP_USER && SMTP_PASS) ? 'smtp' :
-  'none';
-
-if (emailMode === 'none') {
-  console.warn(
-    'Warning: Neither RESEND_API_KEY nor SMTP_USER/SMTP_PASS are set. Email functionality will be disabled.'
-  );
+if (!RESEND_API_KEY) {
+  console.warn('Warning: RESEND_API_KEY is not set. Email functionality will be disabled.');
 } else {
-  console.log(`[Email] Using ${emailMode} mode`);
+  console.log('[Email] Using Resend');
 }
 
-// SMTP transporter (fallback for local dev)
-const transporter =
-  emailMode === 'smtp'
-    ? nodemailer.createTransport({
-        service: 'gmail',
-        auth: {
-          user: SMTP_USER!,
-          pass: SMTP_PASS!,
-        },
-        connectionTimeout: 10000,
-        greetingTimeout: 10000,
-        socketTimeout: 15000,
-      })
-    : null;
-
 /**
- * Send email via Resend HTTP API (works from cloud hosts that block SMTP)
+ * Send email via Resend HTTP API
  */
-async function sendViaResend(
+async function sendEmail(
   to: string,
   subject: string,
   html: string,
   from?: string,
 ): Promise<EmailResponse> {
+  if (!RESEND_API_KEY) {
+    console.warn('[Email] Resend not configured. Email not sent.');
+    return { success: false, error: 'Email service not configured' };
+  }
+
   try {
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -54,7 +31,7 @@ async function sendViaResend(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: from || `Pick N Take <${RESEND_FROM_EMAIL}>`,
+        from: from || RESEND_FROM_EMAIL,
         to: [to],
         subject,
         html,
@@ -65,7 +42,6 @@ async function sendViaResend(
 
     if (!res.ok) {
       console.error('[Email/Resend] API error:', res.status, data);
-      // Resend free-tier 403: "You can only send testing emails to your own email address"
       const msg =
         data?.message ||
         data?.error ||
@@ -82,51 +58,6 @@ async function sendViaResend(
       error: error instanceof Error ? error.message : 'Unknown error',
     };
   }
-}
-
-/**
- * Send email via SMTP (nodemailer)
- */
-async function sendViaSMTP(
-  to: string,
-  subject: string,
-  html: string,
-  from?: string,
-): Promise<EmailResponse> {
-  if (!transporter) {
-    return { success: false, error: 'SMTP not configured' };
-  }
-  try {
-    const info = await transporter.sendMail({
-      from: from || `Pick N Take <${SMTP_USER}>`,
-      to,
-      subject,
-      html,
-    });
-    console.log('[Email/SMTP] Sent to', to, '- ID:', info.messageId);
-    return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error('[Email/SMTP] Error:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
-}
-
-/**
- * Unified email send — routes to Resend or SMTP based on config
- */
-async function sendEmail(
-  to: string,
-  subject: string,
-  html: string,
-  from?: string,
-): Promise<EmailResponse> {
-  if (emailMode === 'resend') return sendViaResend(to, subject, html, from);
-  if (emailMode === 'smtp') return sendViaSMTP(to, subject, html, from);
-  console.warn('[Email] No email provider configured. Email not sent.');
-  return { success: false, error: 'Email service not configured' };
 }
 
 interface EmailResponse {
@@ -155,7 +86,7 @@ export async function sendVerificationEmail(
   name: string,
   token: string
 ): Promise<EmailResponse> {
-  if (emailMode === 'none') {
+  if (!RESEND_API_KEY) {
     console.warn('Email not configured. Verification email not sent.');
     return { success: false, error: 'Email service not configured' };
   }
@@ -277,7 +208,7 @@ export async function sendPasswordResetEmail(
   name: string,
   token: string
 ): Promise<EmailResponse> {
-  if (emailMode === 'none') {
+  if (!RESEND_API_KEY) {
     console.warn('Email not configured. Password reset email not sent.');
     return { success: false, error: 'Email service not configured' };
   }
@@ -408,7 +339,7 @@ export async function sendPurchaseConfirmationEmail(
   name: string,
   orderDetails: OrderDetails
 ): Promise<EmailResponse> {
-  if (emailMode === 'none') {
+  if (!RESEND_API_KEY) {
     console.warn('Email not configured. Purchase confirmation not sent.');
     return { success: false, error: 'Email service not configured' };
   }
@@ -615,7 +546,7 @@ export async function sendAccountDeletionEmail(
   name: string,
   token: string
 ): Promise<EmailResponse> {
-  if (emailMode === 'none') {
+  if (!RESEND_API_KEY) {
     console.warn('Email not configured. Account deletion email not sent.');
     return { success: false, error: 'Email service not configured' };
   }

@@ -384,97 +384,70 @@ async function startServer() {
     }
   });
 
-  // ── Diagnostic: test email (Resend or SMTP) ──
+  // ── Diagnostic: test email (Resend) ──
   // Usage: GET /api/auth/test-email?to=you@example.com
   app.get("/api/auth/test-email", async (req, res) => {
-    const smtpUser = process.env.SMTP_USER;
-    const smtpPass = process.env.SMTP_PASS;
     const resendKey = process.env.RESEND_API_KEY;
     const resendFrom = process.env.RESEND_FROM_EMAIL;
     const baseUrl = process.env.BASE_URL;
-    const mode = resendKey ? "resend" : (smtpUser && smtpPass) ? "smtp" : "none";
     const toParam = typeof req.query.to === "string" ? req.query.to : undefined;
 
-    if (mode === "none") {
+    if (!resendKey) {
       return res.json({
         success: false, error: "No email provider configured",
-        detail: {
-          RESEND_API_KEY: resendKey ? "SET" : "MISSING",
-          SMTP_USER: smtpUser ? "SET" : "MISSING",
-          SMTP_PASS: smtpPass ? "SET" : "MISSING",
-        },
+        detail: { RESEND_API_KEY: "MISSING" },
         hint: "Set RESEND_API_KEY (and optionally RESEND_FROM_EMAIL for a verified sender) in your environment, then redeploy.",
       });
     }
 
     try {
-      if (mode === "resend") {
-        const recipient = toParam || smtpUser || "test@example.com";
-        const fromAddress = resendFrom || "Pick N Take Test <onboarding@resend.dev>";
-        const r = await fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            from: fromAddress,
-            to: [recipient],
-            subject: "Pick N Take Email Test - " + new Date().toISOString(),
-            html: "<p>If you see this, Resend email is working!</p>",
-          }),
-        });
-        const data = await r.json().catch(() => ({}));
-        if (!r.ok) {
-          // Known Resend free-tier issue: using onboarding@resend.dev can only send
-          // to the Resend account owner's verified email. Status code 403 with a
-          // message like "You can only send testing emails to your own email address".
-          const usingDefaultFrom = !resendFrom;
-          const looksLikeFreeTierBlock =
-            r.status === 403 ||
-            (typeof data?.message === "string" &&
-              /only send.*own email|verify a domain/i.test(data.message));
-          return res.json({
-            success: false,
-            mode,
-            status: r.status,
-            error: data?.message || data?.error || `HTTP ${r.status}`,
-            data,
-            sentFrom: fromAddress,
-            sentTo: recipient,
-            config: {
-              BASE_URL: baseUrl,
-              RESEND_FROM_EMAIL: resendFrom ? "SET" : "MISSING (using onboarding@resend.dev)",
-            },
-            hint: looksLikeFreeTierBlock && usingDefaultFrom
-              ? "Resend's free default sender (onboarding@resend.dev) can ONLY deliver to the email you signed up to Resend with. To send to anyone else you must (a) verify a domain in the Resend dashboard and set RESEND_FROM_EMAIL=\"YourApp <noreply@yourdomain.com>\", OR (b) test only with the email tied to your Resend account."
-              : undefined,
-          });
-        }
+      const recipient = toParam || "test@example.com";
+      const fromAddress = resendFrom || "Pick N Take Test <onboarding@resend.dev>";
+      const r = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: fromAddress,
+          to: [recipient],
+          subject: "Pick N Take Email Test - " + new Date().toISOString(),
+          html: "<p>If you see this, Resend email is working!</p>",
+        }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const usingDefaultFrom = !resendFrom;
+        const looksLikeFreeTierBlock =
+          r.status === 403 ||
+          (typeof data?.message === "string" &&
+            /only send.*own email|verify a domain/i.test(data.message));
         return res.json({
-          success: true,
-          mode,
-          messageId: data.id,
+          success: false,
+          status: r.status,
+          error: data?.message || data?.error || `HTTP ${r.status}`,
+          data,
           sentFrom: fromAddress,
           sentTo: recipient,
           config: {
             BASE_URL: baseUrl,
             RESEND_FROM_EMAIL: resendFrom ? "SET" : "MISSING (using onboarding@resend.dev)",
           },
+          hint: looksLikeFreeTierBlock && usingDefaultFrom
+            ? "Resend's free default sender (onboarding@resend.dev) can ONLY deliver to the email you signed up to Resend with. To send to anyone else you must (a) verify a domain in the Resend dashboard and set RESEND_FROM_EMAIL=\"YourApp <noreply@yourdomain.com>\", OR (b) test only with the email tied to your Resend account."
+            : undefined,
         });
-      } else {
-        const nodemailer = await import("nodemailer");
-        const t = nodemailer.default.createTransport({
-          service: "gmail", auth: { user: smtpUser!, pass: smtpPass! },
-          connectionTimeout: 15000, greetingTimeout: 15000, socketTimeout: 20000,
-        });
-        await t.verify();
-        const info = await t.sendMail({
-          from: `Pick N Take Test <${smtpUser}>`, to: smtpUser!,
-          subject: "Pick N Take SMTP Test - " + new Date().toISOString(),
-          text: "If you see this, SMTP is working!",
-        });
-        return res.json({ success: true, mode, messageId: info.messageId, sentTo: smtpUser, config: { BASE_URL: baseUrl } });
       }
+      return res.json({
+        success: true,
+        messageId: data.id,
+        sentFrom: fromAddress,
+        sentTo: recipient,
+        config: {
+          BASE_URL: baseUrl,
+          RESEND_FROM_EMAIL: resendFrom ? "SET" : "MISSING (using onboarding@resend.dev)",
+        },
+      });
     } catch (err: any) {
-      return res.json({ success: false, mode, error: err.message || String(err), code: err.code });
+      return res.json({ success: false, error: err.message || String(err), code: err.code });
     }
   });
 
