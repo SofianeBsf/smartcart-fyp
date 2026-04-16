@@ -4,6 +4,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
@@ -58,6 +59,9 @@ import {
   Trash2,
   ChevronLeft,
   ChevronRight,
+  ImagePlus,
+  X,
+  Settings2,
 } from "lucide-react";
 import Header from "@/components/Header";
 
@@ -455,9 +459,44 @@ function CatalogTab() {
     stockQuantity: "100", asin: "",
   };
   const [form, setForm] = useState(emptyForm);
+  const [initialForm, setInitialForm] = useState(emptyForm);
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [isCreatingCategory, setIsCreatingCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [showCategoryManager, setShowCategoryManager] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const markTouched = (field: string) => setTouched(t => ({ ...t, [field]: true }));
+  const hasChanges = JSON.stringify(form) !== JSON.stringify(initialForm);
+
+  // Inline validation helpers
+  const fieldError = (field: string): string | null => {
+    if (!touched[field]) return null;
+    switch (field) {
+      case "title": return !form.title.trim() ? "Title is required" : null;
+      case "description": return !form.description.trim() ? "Description is required" : null;
+      case "category": {
+        const cat = isCreatingCategory ? newCategoryName.trim() : form.category;
+        return !cat ? "Category is required" : null;
+      }
+      case "brand": return !form.brand.trim() ? "Brand is required" : null;
+      case "price": {
+        const p = parseFloat(form.price);
+        return (!form.price || isNaN(p) || p <= 0) ? "Must be greater than 0" : null;
+      }
+      case "rating": {
+        const r = parseFloat(form.rating);
+        return (!form.rating || isNaN(r) || r < 0 || r > 5) ? "Must be 0–5" : null;
+      }
+      case "stockQuantity": {
+        const s = parseInt(form.stockQuantity);
+        return (isNaN(s) || s < 0) ? "Must be 0 or more" : null;
+      }
+      case "imageUrl": return !form.imageUrl ? "Image is required" : null;
+      default: return null;
+    }
+  };
 
   // Fetch categories
   const { data: categories = [] } = trpc.products.categories.useQuery();
@@ -573,7 +612,7 @@ function CatalogTab() {
   };
 
   const openEdit = (product: any) => {
-    setForm({
+    const formData = {
       title: product.title || "",
       description: product.description || "",
       category: product.category || "",
@@ -583,13 +622,41 @@ function CatalogTab() {
       rating: product.rating || "",
       stockQuantity: String(product.stockQuantity ?? 100),
       asin: product.asin || "",
-    });
+    };
+    setForm(formData);
+    setInitialForm(formData);
+    setTouched({});
     setIsCreatingCategory(false);
     setNewCategoryName("");
     setEditingProduct(product);
   };
 
+  const handleImageFile = async (file: File) => {
+    const MAX_BYTES = 4 * 1024 * 1024;
+    if (file.size > MAX_BYTES) {
+      toast.error("Image is too large (max 4 MB).");
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      toast.error("File must be an image.");
+      return;
+    }
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      setForm(f => ({ ...f, imageUrl: dataUrl }));
+    } catch {
+      toast.error("Failed to read image.");
+    }
+  };
+
   const handleSave = () => {
+    // Touch all fields to show inline errors
+    setTouched({ title: true, description: true, category: true, brand: true, price: true, rating: true, stockQuantity: true, imageUrl: true });
     const finalCategory = isCreatingCategory ? newCategoryName.trim() : form.category;
     if (!form.title.trim()) { toast.error("Title is required"); return; }
     if (!form.description.trim()) { toast.error("Description is required"); return; }
@@ -697,172 +764,232 @@ function CatalogTab() {
     <Dialog
       open={showAddDialog || !!editingProduct}
       onOpenChange={(open) => {
-        if (!open) { setShowAddDialog(false); setEditingProduct(null); setForm(emptyForm); }
+        if (!open) { setShowAddDialog(false); setEditingProduct(null); setForm(emptyForm); setInitialForm(emptyForm); setTouched({}); }
       }}
     >
-      <DialogContent className="sm:max-w-[550px] max-h-[85vh] flex flex-col overflow-hidden">
-        <DialogHeader className="shrink-0 border-b pb-4">
-          <DialogTitle>{editingProduct ? "Edit Product" : "Add Product"}</DialogTitle>
+      <DialogContent className="sm:max-w-[580px] max-h-[85vh] flex flex-col overflow-hidden shadow-xl">
+        <DialogHeader className="shrink-0 border-b pb-3">
+          <DialogTitle className="text-lg">{editingProduct ? "Edit Product" : "Add Product"}</DialogTitle>
           <DialogDescription>
             {editingProduct ? "Update the product details below." : "Fill in the product details. Embedding will be generated automatically."}
           </DialogDescription>
         </DialogHeader>
-        <div className="flex-1 overflow-y-auto overscroll-contain px-1 py-2">
-        <div className="grid gap-4">
-          <div className="grid gap-2">
-            <Label>Title *</Label>
-            <Input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="Product title" />
+
+        <div className="flex-1 overflow-y-auto overscroll-contain px-1 py-3 space-y-4">
+          {/* Title */}
+          <div className="space-y-1.5">
+            <Label className="text-sm font-medium">Title <span className="text-destructive">*</span></Label>
+            <Input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} onBlur={() => markTouched("title")} placeholder="Product title" />
+            {fieldError("title") && <p className="text-xs text-destructive">{fieldError("title")}</p>}
           </div>
-          <div className="grid gap-2">
-            <Label>Description *</Label>
-            <Input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Product description" />
+
+          {/* Description */}
+          <div className="space-y-1.5">
+            <Label className="text-sm font-medium">Description <span className="text-destructive">*</span></Label>
+            <Textarea
+              value={form.description}
+              onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+              onBlur={() => markTouched("description")}
+              placeholder="Write a detailed product description..."
+              rows={3}
+              className="resize-y min-h-[80px]"
+            />
+            {fieldError("description") && <p className="text-xs text-destructive">{fieldError("description")}</p>}
           </div>
-          <div className="grid gap-2">
-            <div className="flex items-center gap-2">
-              <Label>Category *</Label>
-              <button type="button" className="text-xs text-primary hover:underline" onClick={() => setShowCategoryManager(true)}>
-                Manage
-              </button>
-            </div>
-            {isCreatingCategory ? (
-              <div className="flex gap-2">
-                <Input
-                  value={newCategoryName}
-                  onChange={e => setNewCategoryName(e.target.value)}
-                  placeholder="New category name"
-                  className="flex-1"
-                />
-                <Button type="button" variant="ghost" size="sm" onClick={() => { setIsCreatingCategory(false); setNewCategoryName(""); }}>
-                  Cancel
+
+          {/* Category + Brand row */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm font-medium">Category <span className="text-destructive">*</span></Label>
+                <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs text-muted-foreground hover:text-primary gap-1" onClick={() => setShowCategoryManager(true)}>
+                  <Settings2 className="w-3 h-3" />
+                  Manage
                 </Button>
               </div>
-            ) : (
-              <Select
-                value={form.category}
-                onValueChange={v => {
-                  if (v === "__create_new__") {
-                    setIsCreatingCategory(true);
-                    setNewCategoryName("");
-                    setForm(f => ({ ...f, category: "" }));
-                  } else {
-                    setForm(f => ({ ...f, category: v }));
-                  }
-                }}
-              >
-                <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
-                <SelectContent>
-                  {categories.map((cat: string) => (
-                    <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-                  ))}
-                  <SelectItem value="__create_new__" className="text-primary font-medium">
-                    + Create new category...
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-          <div className="grid gap-2">
-            <Label>Brand *</Label>
-            <Input value={form.brand} onChange={e => setForm(f => ({ ...f, brand: e.target.value }))} placeholder="e.g. Samsung" />
-          </div>
-          <div className="grid grid-cols-3 gap-4">
-            <div className="grid gap-2">
-              <Label>Price (£) *</Label>
-              <Input type="number" step="0.01" min="0" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} placeholder="29.99" />
-            </div>
-            <div className="grid gap-2">
-              <Label>Rating (0-5) *</Label>
-              <Input type="number" step="0.1" min="0" max="5" value={form.rating} onChange={e => setForm(f => ({ ...f, rating: e.target.value }))} placeholder="4.5" />
-            </div>
-            <div className="grid gap-2">
-              <Label>Stock Qty *</Label>
-              <Input type="number" min="0" value={form.stockQuantity} onChange={e => setForm(f => ({ ...f, stockQuantity: e.target.value }))} />
-              {(() => {
-                const qty = parseInt(form.stockQuantity);
-                if (isNaN(qty)) return null;
-                const label = qty === 0 ? "Out of Stock" : qty <= 20 ? "Low Stock" : "In Stock";
-                const color = qty === 0 ? "text-red-600 bg-red-50 border-red-200" : qty <= 20 ? "text-yellow-600 bg-yellow-50 border-yellow-200" : "text-green-600 bg-green-50 border-green-200";
-                return (
-                  <span className={`inline-flex items-center text-xs font-medium px-2 py-0.5 rounded-full border ${color}`}>
-                    {label}
-                  </span>
-                );
-              })()}
-            </div>
-          </div>
-          <div className="grid gap-2">
-            <Label>Product Image</Label>
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-2">
-                <Input
-                  type="file"
-                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    const MAX_BYTES = 4 * 1024 * 1024; // 4 MB
-                    if (file.size > MAX_BYTES) {
-                      toast.error("Image is too large (max 4MB). Please choose a smaller file.");
-                      e.currentTarget.value = "";
-                      return;
-                    }
-                    try {
-                      const dataUrl = await new Promise<string>((resolve, reject) => {
-                        const reader = new FileReader();
-                        reader.onload = () => resolve(reader.result as string);
-                        reader.onerror = () => reject(reader.error);
-                        reader.readAsDataURL(file);
-                      });
-                      setForm(f => ({ ...f, imageUrl: dataUrl }));
-                      toast.success("Image loaded. Click Save to upload.");
-                    } catch {
-                      toast.error("Failed to read image file.");
-                    }
-                    if (e.currentTarget) e.currentTarget.value = "";
-                  }}
-                  className="flex-1"
-                />
-                {form.imageUrl && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setForm(f => ({ ...f, imageUrl: "" }))}
-                  >
-                    Clear
+              {isCreatingCategory ? (
+                <div className="flex gap-1.5">
+                  <Input
+                    value={newCategoryName}
+                    onChange={e => setNewCategoryName(e.target.value)}
+                    onBlur={() => markTouched("category")}
+                    placeholder="New category"
+                    className="flex-1 h-9"
+                  />
+                  <Button type="button" variant="ghost" size="sm" className="h-9 px-2" onClick={() => { setIsCreatingCategory(false); setNewCategoryName(""); }}>
+                    <X className="w-4 h-4" />
                   </Button>
-                )}
+                </div>
+              ) : (
+                <Select
+                  value={form.category}
+                  onValueChange={v => {
+                    markTouched("category");
+                    if (v === "__create_new__") {
+                      setIsCreatingCategory(true);
+                      setNewCategoryName("");
+                      setForm(f => ({ ...f, category: "" }));
+                    } else {
+                      setForm(f => ({ ...f, category: v }));
+                    }
+                  }}
+                >
+                  <SelectTrigger className="h-9"><SelectValue placeholder="Select category" /></SelectTrigger>
+                  <SelectContent>
+                    {categories.map((cat: string) => (
+                      <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                    ))}
+                    <SelectItem value="__create_new__" className="text-primary font-medium">
+                      + Create new category...
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+              {fieldError("category") && <p className="text-xs text-destructive">{fieldError("category")}</p>}
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">Brand <span className="text-destructive">*</span></Label>
+              <Input value={form.brand} onChange={e => setForm(f => ({ ...f, brand: e.target.value }))} onBlur={() => markTouched("brand")} placeholder="e.g. Samsung" className="h-9" />
+              {fieldError("brand") && <p className="text-xs text-destructive">{fieldError("brand")}</p>}
+            </div>
+          </div>
+
+          {/* Price + Rating + Stock row */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">Price <span className="text-destructive">*</span></Label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground font-medium">£</span>
+                <Input type="number" step="0.01" min="0" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} onBlur={() => markTouched("price")} placeholder="29.99" className="pl-7 h-9" />
               </div>
-              <div className="text-xs text-muted-foreground">or paste a URL</div>
-              <Input
-                value={form.imageUrl.startsWith("data:") ? "" : form.imageUrl}
-                onChange={e => setForm(f => ({ ...f, imageUrl: e.target.value }))}
-                placeholder="https://..."
-                disabled={form.imageUrl.startsWith("data:")}
-              />
-              {form.imageUrl && (
+              {fieldError("price") && <p className="text-xs text-destructive">{fieldError("price")}</p>}
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">Rating <span className="text-destructive">*</span></Label>
+              <Input type="number" step="0.1" min="0" max="5" value={form.rating} onChange={e => setForm(f => ({ ...f, rating: e.target.value }))} onBlur={() => markTouched("rating")} placeholder="4.5" className="h-9" />
+              {fieldError("rating") ? (
+                <p className="text-xs text-destructive">{fieldError("rating")}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">0.0 to 5.0</p>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">Stock Qty <span className="text-destructive">*</span></Label>
+              <div className="flex items-center gap-2">
+                <Input type="number" min="0" value={form.stockQuantity} onChange={e => setForm(f => ({ ...f, stockQuantity: e.target.value }))} onBlur={() => markTouched("stockQuantity")} className="h-9 flex-1" />
+                {(() => {
+                  const qty = parseInt(form.stockQuantity);
+                  if (isNaN(qty)) return null;
+                  const dot = qty === 0 ? "bg-red-500" : qty <= 20 ? "bg-yellow-500" : "bg-green-500";
+                  const label = qty === 0 ? "Out" : qty <= 20 ? "Low" : "OK";
+                  return (
+                    <span className="flex items-center gap-1 shrink-0" title={qty === 0 ? "Out of Stock" : qty <= 20 ? "Low Stock" : "In Stock"}>
+                      <span className={`w-2 h-2 rounded-full ${dot}`} />
+                      <span className="text-xs text-muted-foreground font-medium">{label}</span>
+                    </span>
+                  );
+                })()}
+              </div>
+              {fieldError("stockQuantity") && <p className="text-xs text-destructive">{fieldError("stockQuantity")}</p>}
+            </div>
+          </div>
+
+          {/* Product Image — custom upload area */}
+          <div className="space-y-1.5">
+            <Label className="text-sm font-medium">Product Image <span className="text-destructive">*</span></Label>
+            {form.imageUrl ? (
+              <div className="relative group rounded-lg border bg-muted/30 p-3 flex items-center gap-4">
                 <img
                   src={form.imageUrl}
                   alt="Preview"
-                  className="w-24 h-24 object-cover rounded border"
-                  onError={e => (e.currentTarget.style.display = "none")}
+                  className="w-20 h-20 object-cover rounded-md border shadow-sm"
+                  onError={e => { (e.currentTarget as HTMLImageElement).src = ""; }}
                 />
-              )}
-            </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">
+                    {form.imageUrl.startsWith("data:") ? "Uploaded image" : form.imageUrl}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {form.imageUrl.startsWith("data:") ? "Local file ready to save" : "External URL"}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                  onClick={() => setForm(f => ({ ...f, imageUrl: "" }))}
+                >
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+            ) : (
+              <div
+                className={`relative rounded-lg border-2 border-dashed transition-colors cursor-pointer ${isDragging ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/30"}`}
+                onClick={() => imageInputRef.current?.click()}
+                onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={async e => {
+                  e.preventDefault();
+                  setIsDragging(false);
+                  const file = e.dataTransfer.files?.[0];
+                  if (file) await handleImageFile(file);
+                }}
+              >
+                <div className="flex flex-col items-center justify-center py-6 gap-2">
+                  <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+                    <ImagePlus className="w-5 h-5 text-muted-foreground" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-medium">
+                      {isDragging ? "Drop image here" : "Click to upload or drag & drop"}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">PNG, JPG, WebP up to 4 MB</p>
+                  </div>
+                </div>
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (file) await handleImageFile(file);
+                    if (e.currentTarget) e.currentTarget.value = "";
+                  }}
+                />
+              </div>
+            )}
+            {/* URL fallback */}
+            {!form.imageUrl && (
+              <div className="flex items-center gap-2 mt-1.5">
+                <span className="text-xs text-muted-foreground shrink-0">or paste URL</span>
+                <Input
+                  value={form.imageUrl}
+                  onChange={e => setForm(f => ({ ...f, imageUrl: e.target.value }))}
+                  onBlur={() => markTouched("imageUrl")}
+                  placeholder="https://..."
+                  className="h-8 text-sm"
+                />
+              </div>
+            )}
+            {fieldError("imageUrl") && <p className="text-xs text-destructive">{fieldError("imageUrl")}</p>}
           </div>
+
+          {/* ASIN (add mode only) */}
           {!editingProduct && (
-            <div className="grid gap-2">
-              <Label>ASIN (optional)</Label>
-              <Input value={form.asin} onChange={e => setForm(f => ({ ...f, asin: e.target.value }))} placeholder="B0..." />
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium text-muted-foreground">ASIN <span className="text-xs font-normal">(optional)</span></Label>
+              <Input value={form.asin} onChange={e => setForm(f => ({ ...f, asin: e.target.value }))} placeholder="B0..." className="h-9" />
             </div>
           )}
         </div>
-        </div>
-        <DialogFooter className="shrink-0 border-t pt-4">
-          <Button variant="outline" onClick={() => { setShowAddDialog(false); setEditingProduct(null); setForm(emptyForm); }}>
+
+        <DialogFooter className="shrink-0 border-t pt-3 gap-2 sm:gap-0">
+          <Button variant="ghost" onClick={() => { setShowAddDialog(false); setEditingProduct(null); setForm(emptyForm); setInitialForm(emptyForm); setTouched({}); }}>
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={isSaving}>
+          <Button onClick={handleSave} disabled={isSaving || (editingProduct && !hasChanges)}>
             {isSaving ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving...</> : editingProduct ? "Update Product" : "Create Product"}
           </Button>
         </DialogFooter>
@@ -1007,7 +1134,7 @@ function CatalogTab() {
             </span>
             <div className="flex items-center gap-2">
               <Badge variant="outline">{total} total</Badge>
-              <Button size="sm" onClick={() => { setForm(emptyForm); setShowAddDialog(true); }}>
+              <Button size="sm" onClick={() => { setForm(emptyForm); setInitialForm(emptyForm); setTouched({}); setShowAddDialog(true); }}>
                 <Plus className="w-4 h-4 mr-1" />Add Product
               </Button>
             </div>
