@@ -65,6 +65,7 @@ export async function getSessionRecommendations(
   const interactionWeights: Record<string, number> = {
     purchase: 5,
     add_to_cart: 4,
+    wishlist_add: 4,
     search_click: 3,
     click: 2,
     view: 1,

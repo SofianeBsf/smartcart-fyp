@@ -91,50 +91,69 @@ export default function Checkout() {
     );
   }
 
+  const validateCart = trpc.checkout.validateCart.useMutation();
+
   const handlePlaceOrder = async () => {
     setIsProcessing(true);
-    toast.loading("Processing your payment...", { id: "checkout" });
+    toast.loading("Validating your order...", { id: "checkout" });
 
-    // Simulate payment processing
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-
-    const newOrderNumber = "ORD-" + Math.random().toString(36).substr(2, 9).toUpperCase();
-    setOrderNumber(newOrderNumber);
-
-    // Record purchase interactions
-    for (const item of items) {
-      recordInteraction.mutate({
-        productId: item.productId,
-        interactionType: "purchase",
-      });
-    }
-
-    // Send purchase confirmation email
     try {
-      await fetch("/api/auth/send-purchase-email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          orderId: newOrderNumber,
-          items: items.map((item) => ({
-            title: item.title,
-            quantity: item.quantity,
-            price: item.price,
-          })),
-          total,
-        }),
+      // Step 1: Server-side price validation — prevents price manipulation
+      const validation = await validateCart.mutateAsync({
+        items: items.map(item => ({
+          productId: item.productId,
+          quantity: item.quantity,
+          clientPrice: item.price,
+        })),
       });
-    } catch (e) {
-      console.warn("Failed to send confirmation email:", e);
-    }
 
-    clearCart();
-    setOrderConfirmed(true);
-    setIsProcessing(false);
-    toast.success("Order placed successfully! Check your email for confirmation.", {
-      id: "checkout",
-      duration: 6000,
-    });
+      toast.loading("Processing your payment...", { id: "checkout" });
+
+      // Step 2: Simulate payment processing (replace with Stripe/PayPal in production)
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      const newOrderNumber = "ORD-" + Math.random().toString(36).substr(2, 9).toUpperCase();
+      setOrderNumber(newOrderNumber);
+
+      // Record purchase interactions
+      for (const item of items) {
+        recordInteraction.mutate({
+          productId: item.productId,
+          interactionType: "purchase",
+        });
+      }
+
+      // Send purchase confirmation email (using server-validated total)
+      try {
+        await fetch("/api/auth/send-purchase-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            orderId: newOrderNumber,
+            items: validation.items.map((item) => ({
+              title: item.title,
+              quantity: item.quantity,
+              price: item.unitPrice,
+            })),
+            total: validation.total,
+          }),
+        });
+      } catch (e) {
+        console.warn("Failed to send confirmation email:", e);
+      }
+
+      clearCart();
+      setOrderConfirmed(true);
+      toast.success("Order placed successfully! Check your email for confirmation.", {
+        id: "checkout",
+        duration: 6000,
+      });
+    } catch (error: any) {
+      const message = error?.message || "Order validation failed. Please refresh and try again.";
+      toast.error(message, { id: "checkout", duration: 5000 });
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   if (orderConfirmed) {

@@ -69,6 +69,21 @@ import { handleChatMessage } from "./chatbot";
 // Session cookie name for anonymous tracking
 const SESSION_COOKIE = "smartcart_session";
 
+/**
+ * Strip HTML tags and dangerous characters from user input to prevent stored XSS.
+ * Preserves plain text content only.
+ */
+function sanitizeInput(text: string): string {
+  return text
+    .replace(/<[^>]*>/g, "")          // strip HTML tags
+    .replace(/&lt;/g, "<")            // decode common entities (then re-strip)
+    .replace(/&gt;/g, ">")
+    .replace(/<[^>]*>/g, "")          // re-strip after decode
+    .replace(/javascript:/gi, "")     // remove JS protocol
+    .replace(/on\w+\s*=/gi, "")       // remove event handlers (onclick= etc.)
+    .trim();
+}
+
 // Admin procedure that checks for admin role
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (ctx.user.role !== "admin") {
@@ -193,132 +208,25 @@ export const appRouter = router({
         return log;
       }),
 
-    // AI-powered semantic search using FastAPI + Sentence-BERT
+    // Hybrid semantic + keyword search using local Transformers.js embeddings
     semantic: publicProcedure
       .input(z.object({
         query: z.string().min(1).max(500),
         limit: z.number().min(1).max(50).default(20),
         minScore: z.number().min(0).max(1).default(0.1),
         category: z.string().optional(),
-        minPrice: z.number().optional(),
-        maxPrice: z.number().optional(),
+        minPrice: z.number().min(0).optional(),
+        maxPrice: z.number().min(0).optional(),
         inStockOnly: z.boolean().default(false),
-        useAIService: z.boolean().default(true), // Use Python AI service by default
-      }))
+        useAIService: z.boolean().default(true), // kept for API compat, ignored
+      }).refine(
+        data => !(data.minPrice != null && data.maxPrice != null && data.minPrice > data.maxPrice),
+        { message: "minPrice must be less than or equal to maxPrice" }
+      ))
       .query(async ({ input, ctx }) => {
         const sessionId = getOrCreateSessionId(ctx as any);
-        const startTime = Date.now();
-        
-        // Check if AI service is available and requested
-        const aiServiceAvailable = input.useAIService ? await checkAIServiceHealth() : false;
-        
-        if (aiServiceAvailable) {
-          try {
-            // Get all products WITH embeddings from database (LEFT JOIN)
-            const productsWithEmbeddings = await getAllProductsWithOptionalEmbeddings(1000, 0);
-            const weights = await getActiveRankingWeights();
 
-            // Convert products to AI service format, merging embedding data
-            const aiProducts: AIProduct[] = productsWithEmbeddings.map(row => toAIProduct({
-              ...row.product,
-              embedding: row.embedding ? (typeof row.embedding === 'string' ? JSON.parse(row.embedding) : row.embedding) : null,
-            }));
-            
-            // Call FastAPI AI service for semantic search
-            const aiResult = await semanticSearchViaAI(
-              input.query,
-              aiProducts,
-              weights ? fromDBWeights(weights) : undefined,
-              {
-                limit: input.limit,
-                minPrice: input.minPrice,
-                maxPrice: input.maxPrice,
-                category: input.category,
-              }
-            );
-            
-            // Filter by stock if requested
-            let results = aiResult.results;
-            if (input.inStockOnly) {
-              results = results.filter(r => 
-                r.product.availability === "in_stock" || r.product.availability === "low_stock"
-              );
-            }
-            
-            // Filter by minimum score
-            results = results.filter(r => r.score_breakdown.final_score >= input.minScore);
-            
-            if (results.length > 0) {
-              // Transform results to match existing frontend format
-              const transformedResults = results.map(r => ({
-                product: {
-                  id: r.product.id,
-                  title: r.product.title,
-                  description: r.product.description,
-                  category: r.product.category,
-                  imageUrl: productsWithEmbeddings.find(p => p.product.id === r.product.id)?.product.imageUrl || null,
-                  price: r.product.price?.toString() || null,
-                  rating: r.product.rating?.toString() || null,
-                  reviewCount: r.product.review_count || 0,
-                  availability: (r.product.availability as "in_stock" | "low_stock" | "out_of_stock" | null) || "in_stock",
-                },
-                score: r.score_breakdown.final_score,
-                scoreBreakdown: {
-                  semanticScore: r.score_breakdown.semantic_score,
-                  ratingScore: r.score_breakdown.rating_score,
-                  priceScore: r.score_breakdown.price_score,
-                  stockScore: r.score_breakdown.stock_score,
-                  recencyScore: r.score_breakdown.recency_score,
-                },
-                explanation: r.score_breakdown.explanation,
-                matchedTerms: r.score_breakdown.matched_terms,
-                rank: r.rank,
-              }));
-              
-              // Log search to database
-              const searchLogId = await logSearch({
-                query: input.query,
-                sessionId,
-                resultsCount: transformedResults.length,
-                responseTimeMs: aiResult.response_time_ms,
-              });
-
-              // Save result explanations
-              if (searchLogId > 0) {
-                const explanations = transformedResults.map((r, i) => ({
-                  searchLogId,
-                  productId: r.product.id,
-                  position: i + 1,
-                  semanticScore: r.scoreBreakdown.semanticScore.toString(),
-                  ratingScore: r.scoreBreakdown.ratingScore.toString(),
-                  priceScore: r.scoreBreakdown.priceScore.toString(),
-                  stockScore: r.scoreBreakdown.stockScore.toString(),
-                  recencyScore: r.scoreBreakdown.recencyScore.toString(),
-                  finalScore: r.score.toString(),
-                  explanation: r.explanation,
-                  matchedTerms: r.matchedTerms,
-                }));
-                await saveSearchExplanations(explanations);
-              }
-
-              return {
-                results: transformedResults,
-                searchLogId,
-                responseTimeMs: aiResult.response_time_ms,
-                query: input.query,
-              };
-            }
-            console.log("[Search] AI service returned 0 results, falling back to local search");
-          } catch (error) {
-            console.warn("[Search] AI service error, falling back to local search:", error);
-            // Fall through to local search
-          }
-        }
-        
-        // Fallback to local semantic search.
-        // This CAN throw if the AI service is completely unreachable, because
-        // generateEmbedding() (for the query) now hard-requires the Python
-        // service. In that case we degrade further to pure keyword search.
+        // Primary path: local hybrid semantic + keyword search (no external service)
         try {
           const result = await semanticSearch(input.query, {
             limit: input.limit,
@@ -336,19 +244,16 @@ export const appRouter = router({
               searchLogId: result.searchLogId,
               responseTimeMs: result.responseTimeMs,
               query: input.query,
-              aiServiceUsed: false,
             };
           }
-          // 0 semantic results → fall through to keyword search below
         } catch (semanticError) {
           console.warn(
-            "[Search] Local semantic search unavailable (AI service down?), using keyword fallback:",
+            "[Search] Local semantic search failed, using keyword fallback:",
             semanticError instanceof Error ? semanticError.message : semanticError,
           );
-          // Fall through to keyword search
         }
 
-        // Final fallback: pure keyword/title search (no embeddings needed)
+        // Fallback: pure keyword/title search (no embeddings needed)
         const keywordStartTime = Date.now();
         const keywordProducts = await searchProductsByKeyword(input.query, input.limit);
 
@@ -383,24 +288,23 @@ export const appRouter = router({
               recency: 0.5,
             },
             matchedTerms: [],
-            explanation: "Keyword match (AI service offline)",
+            explanation: "Keyword match (embedding model loading)",
             position: index + 1,
           })),
           searchLogId: 0,
           responseTimeMs: Date.now() - keywordStartTime,
           query: input.query,
-          aiServiceUsed: false,
           fallbackUsed: "keyword",
         };
       }),
-    
-    // Health check for AI service
+
+    // Health check for local embedding model
     aiServiceHealth: publicProcedure.query(async () => {
       const healthy = await checkAIServiceHealth();
-      return { healthy, service: "FastAPI + Sentence-BERT" };
+      return { healthy, service: "Local Transformers.js (BGE-small-en-v1.5)" };
     }),
 
-    logs: publicProcedure
+    logs: adminProcedure
       .input(z.object({ limit: z.number().min(1).max(500).default(100) }).optional())
       .query(async ({ input }) => {
         return getSearchLogs(input?.limit || 100);
@@ -443,7 +347,7 @@ export const appRouter = router({
     recordInteraction: publicProcedure
       .input(z.object({
         productId: z.number(),
-        interactionType: z.enum(["view", "click", "search_click", "add_to_cart", "purchase"]),
+        interactionType: z.enum(["view", "click", "search_click", "add_to_cart", "wishlist_add", "purchase"]),
         searchQuery: z.string().optional(),
         position: z.number().optional(),
       }))
@@ -484,6 +388,97 @@ export const appRouter = router({
       .query(async ({ input, ctx }) => {
         const sessionId = getOrCreateSessionId(ctx as any);
         return getSessionInteractions(sessionId, input?.limit || 50);
+      }),
+  }),
+
+  // ==================== CHECKOUT / ORDER VALIDATION ====================
+  checkout: router({
+    /**
+     * Server-side price validation. The client sends the cart items and
+     * the server verifies each price against the database. This prevents
+     * price manipulation via localStorage/DevTools.
+     */
+    validateCart: protectedProcedure
+      .input(z.object({
+        items: z.array(z.object({
+          productId: z.number().int().positive(),
+          quantity: z.number().int().positive().max(100),
+          clientPrice: z.number().positive(), // price the client thinks is correct
+        })),
+      }))
+      .mutation(async ({ input }) => {
+        if (input.items.length === 0) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Cart is empty" });
+        }
+
+        const productIds = input.items.map((i: { productId: number }) => i.productId);
+        const dbProducts = await getProductsByIds(productIds);
+        const productMap = new Map<number, typeof dbProducts[number]>();
+        for (const p of dbProducts) productMap.set(p.id, p);
+
+        let serverTotal = 0;
+        const validatedItems: Array<{
+          productId: number;
+          title: string;
+          quantity: number;
+          unitPrice: number;
+          lineTotal: number;
+        }> = [];
+
+        for (const item of input.items) {
+          const product = productMap.get(item.productId);
+          if (!product) {
+            throw new TRPCError({
+              code: "NOT_FOUND",
+              message: `Product ${item.productId} not found`,
+            });
+          }
+
+          if (product.availability === "out_of_stock") {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `${product.title} is out of stock`,
+            });
+          }
+
+          const serverPrice = Number(product.price) || 0;
+          const clientPrice = item.clientPrice;
+
+          // Reject if client price doesn't match server price (tolerance of £0.01 for rounding)
+          if (Math.abs(serverPrice - clientPrice) > 0.01) {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: `Price mismatch for ${product.title}: expected £${serverPrice.toFixed(2)} but got £${clientPrice.toFixed(2)}. Please refresh your cart.`,
+            });
+          }
+
+          if (product.stockQuantity != null && item.quantity > product.stockQuantity) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `Only ${product.stockQuantity} units of ${product.title} available`,
+            });
+          }
+
+          const lineTotal = serverPrice * item.quantity;
+          serverTotal += lineTotal;
+          validatedItems.push({
+            productId: product.id,
+            title: product.title,
+            quantity: item.quantity,
+            unitPrice: serverPrice,
+            lineTotal,
+          });
+        }
+
+        const shipping = serverTotal > 50 ? 0 : 5.99;
+
+        return {
+          valid: true,
+          items: validatedItems,
+          subtotal: Math.round(serverTotal * 100) / 100,
+          shipping,
+          total: Math.round((serverTotal + shipping) * 100) / 100,
+        };
       }),
   }),
 
@@ -1100,11 +1095,15 @@ export const appRouter = router({
       .input(z.object({
         productId: z.number(),
         rating: z.number().min(1).max(5),
-        comment: z.string().min(1, "Comment is required"),
+        comment: z.string().min(1, "Comment is required").max(5000),
       }))
       .mutation(async ({ input, ctx }) => {
         if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
-        const id = await createReview({ ...input, userId: ctx.user.id });
+        const sanitizedComment = sanitizeInput(input.comment);
+        if (sanitizedComment.length === 0) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Comment cannot be empty" });
+        }
+        const id = await createReview({ ...input, comment: sanitizedComment, userId: ctx.user.id });
         return { id };
       }),
 
@@ -1112,11 +1111,17 @@ export const appRouter = router({
       .input(z.object({
         id: z.number(),
         rating: z.number().min(1).max(5).optional(),
-        comment: z.string().min(1).optional(),
+        comment: z.string().min(1).max(5000).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
         const { id, ...data } = input;
+        if (data.comment) {
+          data.comment = sanitizeInput(data.comment);
+          if (data.comment.length === 0) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Comment cannot be empty" });
+          }
+        }
         await updateReviewDb(id, ctx.user.id, data);
         return { success: true };
       }),

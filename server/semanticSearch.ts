@@ -1,4 +1,3 @@
-import { invokeLLM } from "./_core/llm";
 import {
   getAllProductsWithOptionalEmbeddings,
   getActiveRankingWeights,
@@ -8,17 +7,11 @@ import {
   getProductById,
   getProductsByIds,
 } from "./db";
-import {
-  checkAIServiceHealth,
-  generateEmbedding as generateEmbeddingViaAI,
-  generateQueryEmbedding as generateQueryEmbeddingViaAI,
-  generateBatchEmbeddings as generateBatchEmbeddingsViaAI,
-} from "./aiService";
+import * as localEmbedding from "./localEmbedding";
 import type { Product, RankingWeight } from "../drizzle/schema";
 
 /**
- * Embedding dimension for the model we use.
- * We use a text-embedding approach via LLM to generate semantic embeddings.
+ * Embedding dimension for the BGE-small-en-v1.5 model.
  */
 const EMBEDDING_DIMENSION = 384;
 
@@ -116,16 +109,16 @@ export function buildCorpusIDF(productTexts: string[]): void {
   // Count document frequency for each term
   for (const text of productTexts) {
     const uniqueTokens = new Set(tokenize(text));
-    for (const token of uniqueTokens) {
+    uniqueTokens.forEach(token => {
       docFrequency.set(token, (docFrequency.get(token) || 0) + 1);
-    }
+    });
   }
 
   // Calculate IDF for each term: log(N / df)
   idfDict = new Map();
-  for (const [term, df] of docFrequency) {
+  docFrequency.forEach((df, term) => {
     idfDict.set(term, Math.log(numDocs / Math.max(df, 1)));
-  }
+  });
 
   vocabularySize = idfDict.size;
   corpusBuilt = true;
@@ -145,30 +138,23 @@ function generateTFIDFVector(text: string, targetDim: number = EMBEDDING_DIMENSI
   }
 
   // Create vector representation using selected features
-  // We'll use a deterministic feature extraction approach based on term hashing
-  const vector: number[] = new Array(targetDim).fill(0);
+  const vector: number[] = Array.from({ length: targetDim }, (): number => 0);
 
-  for (const [term, frequency] of tf) {
-    // Hash term to dimension
+  tf.forEach((frequency, term) => {
     let hash = 0;
     for (let i = 0; i < term.length; i++) {
       hash = ((hash << 5) - hash) + term.charCodeAt(i);
-      hash |= 0; // Convert to 32bit integer
+      hash |= 0;
     }
     const dimension = Math.abs(hash) % targetDim;
-
-    // Get IDF value, default to 1 if not in corpus
     const idf = idfDict.get(term) || 1;
     const tfidf = frequency * idf;
+    vector[dimension] += tfidf * 0.1;
+  });
 
-    // Add weighted value to vector
-    vector[dimension] += tfidf * 0.1; // Scale to prevent overflow
-  }
-
-  // Ensure we have some signal even for unknown terms
   if (vector.every(v => v === 0)) {
     for (let i = 0; i < Math.min(5, targetDim); i++) {
-      vector[i] = 0.1;
+      (vector as number[])[i] = 0.1;
     }
   }
 
@@ -176,29 +162,19 @@ function generateTFIDFVector(text: string, targetDim: number = EMBEDDING_DIMENSI
 }
 
 /**
- * Generate a query embedding by calling the Python AI service.
+ * Generate a query embedding using the local BGE model.
  *
- * This MUST use the /embed/query endpoint, which applies the BGE query prefix
- * ("Represent this sentence for searching relevant passages: "). BGE is an
- * asymmetric retrieval model — passing the raw query through /embed (the
- * passage endpoint) silently degrades retrieval quality because the query
- * vector ends up in the wrong subspace. If the AI service is unavailable we
- * throw instead of silently returning a fake vector.
+ * This uses the Transformers.js local model with the BGE query prefix
+ * ("Represent this sentence for searching relevant passages: "). No
+ * external Python service required.
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
-  const healthy = await checkAIServiceHealth();
-  if (!healthy) {
-    throw new Error(
-      "[SemanticSearch] AI service is not reachable — cannot generate query embedding. " +
-        "Start the Python service (ai-service/main.py) and retry."
-    );
-  }
-  return generateQueryEmbeddingViaAI(text);
+  return localEmbedding.generateQueryEmbedding(text);
 }
 
 /**
  * Generate a deterministic embedding based on TF-IDF approach.
- * Used as fallback when LLM embedding fails.
+ * Used as fallback when the local model fails to load.
  */
 function generateDeterministicEmbedding(text: string): number[] {
   return generateTFIDFVector(text, EMBEDDING_DIMENSION);
@@ -221,7 +197,7 @@ function generateRandomEmbedding(): number[] {
  */
 function normalizeVectorDimension(vector: number[], targetDim: number): number[] {
   if (!Array.isArray(vector)) return generateRandomEmbedding();
-  
+
   const result: number[] = [];
   for (let i = 0; i < targetDim; i++) {
     result.push(vector[i] ?? (Math.random() * 2 - 1));
@@ -247,20 +223,20 @@ export function cosineSimilarity(a: number[], b: number[]): number {
     console.warn("[SemanticSearch] Vector dimension mismatch:", a.length, b.length);
     return 0;
   }
-  
+
   let dotProduct = 0;
   let normA = 0;
   let normB = 0;
-  
+
   for (let i = 0; i < a.length; i++) {
     dotProduct += a[i] * b[i];
     normA += a[i] * a[i];
     normB += b[i] * b[i];
   }
-  
+
   const magnitude = Math.sqrt(normA) * Math.sqrt(normB);
   if (magnitude === 0) return 0;
-  
+
   return dotProduct / magnitude;
 }
 
@@ -270,8 +246,84 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 function extractMatchedTerms(query: string, productText: string): string[] {
   const queryTerms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2);
   const productLower = productText.toLowerCase();
-  
+
   return queryTerms.filter(term => productLower.includes(term));
+}
+
+// ============================================================================
+// Hybrid search: exact match boost
+// ============================================================================
+
+/**
+ * Compute a keyword/exact-match score for a product against a query.
+ *
+ * Returns a value in [0, 1]:
+ *   - 1.0  → product title exactly equals the query (case-insensitive)
+ *   - 0.85 → product title contains the full query as a substring
+ *   - 0.4–0.7 → partial token overlap (Jaccard-like on words)
+ *   - 0.0  → no lexical overlap at all
+ *
+ * This is designed to complement semantic similarity so that exact product
+ * name searches always rank the correct product first, even if something
+ * else is semantically close.
+ */
+function computeKeywordScore(query: string, product: { title: string; description?: string | null; category?: string | null }): number {
+  const q = query.toLowerCase().trim();
+  const title = product.title.toLowerCase().trim();
+
+  // Exact title match → maximum boost
+  if (title === q) return 1.0;
+
+  // Title contains the full query as a substring
+  if (title.includes(q)) return 0.85;
+
+  // Query contains the full title as a substring (user typed more than the title)
+  if (q.includes(title)) return 0.80;
+
+  // Token-level overlap (Jaccard similarity on title)
+  const qTokensArr = q.split(/\s+/).filter(t => t.length > 1 && !STOP_WORDS.has(t));
+  const titleTokensArr = title.split(/\s+/).filter(t => t.length > 1 && !STOP_WORDS.has(t));
+  const qTokens = new Set(qTokensArr);
+  const titleTokens = new Set(titleTokensArr);
+
+  if (qTokens.size === 0 || titleTokens.size === 0) return 0;
+
+  let matches = 0;
+  qTokensArr.forEach(t => {
+    if (titleTokens.has(t)) matches++;
+    else {
+      // Check partial match (e.g., "headphone" matches "headphones")
+      let found = false;
+      titleTokensArr.forEach(tt => {
+        if (!found && (tt.startsWith(t) || t.startsWith(tt))) {
+          matches += 0.8;
+          found = true;
+        }
+      });
+    }
+  });
+
+  // Scale by proportion of query terms matched, weighted toward title coverage
+  const queryOverlap = matches / qTokens.size;
+  const titleOverlap = Math.min(matches, titleTokens.size) / titleTokens.size;
+
+  // Combine: mostly care about query term coverage, with bonus for title coverage
+  const score = 0.7 * queryOverlap + 0.3 * titleOverlap;
+
+  // Also check description for partial matches
+  const desc = (product.description || "").toLowerCase();
+  let descBonus = 0;
+  if (desc.includes(q)) {
+    descBonus = 0.1;
+  } else {
+    let descMatches = 0;
+    qTokensArr.forEach(t => {
+      if (desc.includes(t)) descMatches++;
+    });
+    descBonus = (descMatches / qTokens.size) * 0.05;
+  }
+
+  return Math.min(1.0, score * 0.7 + descBonus);
 }
 
 /**
@@ -286,49 +338,55 @@ function generateExplanation(
     stock: number;
     recency: number;
     final: number;
+    keyword?: number;
   },
   matchedTerms: string[],
   weights: RankingWeight
 ): string {
   const parts: string[] = [];
-  
+
+  // Keyword/exact match explanation (highest priority)
+  if (scores.keyword != null && scores.keyword >= 0.85) {
+    parts.push("Exact name match");
+  } else if (scores.keyword != null && scores.keyword >= 0.5) {
+    parts.push("Strong keyword match");
+  }
+
   // Semantic match explanation
   if (scores.semantic > 0.5) {
     parts.push(`High semantic match (${(scores.semantic * 100).toFixed(0)}%)`);
   } else if (scores.semantic > 0.3) {
     parts.push(`Moderate semantic match (${(scores.semantic * 100).toFixed(0)}%)`);
   }
-  
+
   // Matched terms
   if (matchedTerms.length > 0) {
     parts.push(`Matches: ${matchedTerms.slice(0, 3).join(", ")}`);
   }
-  
+
   // Rating
   if (product.rating && Number(product.rating) >= 4) {
     parts.push(`Highly rated (${product.rating}★)`);
   }
-  
+
   // Price value
   if (scores.price > 0.7) {
     parts.push("Great value");
   }
-  
+
   // Availability
   if (product.availability === "in_stock") {
     parts.push("In stock");
   }
-  
+
   return parts.length > 0 ? parts.join(" • ") : "Relevant to your search";
 }
 
 /**
  * Normalize price score (inverse - lower price = higher score).
- * Uses min-max normalization across the result set.
  */
 function normalizePriceScore(price: number, minPrice: number, maxPrice: number): number {
   if (maxPrice === minPrice) return 0.5;
-  // Inverse: lower price = higher score
   return 1 - ((price - minPrice) / (maxPrice - minPrice));
 }
 
@@ -347,7 +405,6 @@ function normalizeStockScore(availability: string | null, quantity: number | nul
   if (availability === "out_of_stock") return 0;
   if (availability === "low_stock") return 0.5;
   if (availability === "in_stock") {
-    // Bonus for high stock
     const qty = quantity ?? 100;
     return Math.min(1, 0.7 + (qty / 500) * 0.3);
   }
@@ -361,12 +418,10 @@ function normalizeRecencyScore(createdAt: Date): number {
   const now = Date.now();
   const created = createdAt.getTime();
   const daysSinceCreation = (now - created) / (1000 * 60 * 60 * 24);
-  
-  // Products created within last 30 days get full score
-  // Score decays over 365 days
+
   if (daysSinceCreation <= 30) return 1;
   if (daysSinceCreation >= 365) return 0.1;
-  
+
   return 1 - ((daysSinceCreation - 30) / 335) * 0.9;
 }
 
@@ -379,6 +434,7 @@ export interface SearchResult {
     price: number;
     stock: number;
     recency: number;
+    keyword?: number;
   };
   matchedTerms: string[];
   explanation: string;
@@ -396,7 +452,18 @@ export interface SemanticSearchOptions {
 }
 
 /**
- * Perform semantic search with explainable ranking.
+ * Perform hybrid semantic + keyword search with explainable ranking.
+ *
+ * The scoring formula is:
+ *   FinalScore = α×Semantic + β×Rating + γ×Price + δ×Stock + ε×Recency + κ×Keyword
+ *
+ * Where κ (kappa) is a keyword boost weight (0.25) that ensures exact product
+ * name matches always rank first. The other weights are scaled proportionally
+ * to preserve the admin-configured balance.
+ *
+ * The keyword score is computed purely from lexical overlap (title matching,
+ * substring containment, token Jaccard) — it does NOT go through the embedding
+ * model so it adds negligible latency.
  */
 export async function semanticSearch(
   query: string,
@@ -424,16 +491,26 @@ export async function semanticSearch(
     buildCorpusIDF(productTexts);
   }
 
-  // Generate query embedding
+  // Generate query embedding using local model (no external service)
   const queryEmbedding = await generateEmbedding(query);
-  
+
   // Get active ranking weights
   const weights = await getActiveRankingWeights();
-  const alpha = Number(weights.alpha);
-  const beta = Number(weights.beta);
-  const gamma = Number(weights.gamma);
-  const delta = Number(weights.delta);
-  const epsilon = Number(weights.epsilon);
+  const rawAlpha = Number(weights.alpha);
+  const rawBeta = Number(weights.beta);
+  const rawGamma = Number(weights.gamma);
+  const rawDelta = Number(weights.delta);
+  const rawEpsilon = Number(weights.epsilon);
+
+  // Keyword boost weight — this ensures exact matches always win.
+  // We take 25% of the total budget for keywords, scaling other weights down.
+  const KAPPA = 0.25;
+  const scaleFactor = 1 - KAPPA;
+  const alpha = rawAlpha * scaleFactor;
+  const beta = rawBeta * scaleFactor;
+  const gamma = rawGamma * scaleFactor;
+  const delta = rawDelta * scaleFactor;
+  const epsilon = rawEpsilon * scaleFactor;
 
   // Calculate price range for normalization
   const prices = productsWithEmbeddings
@@ -442,26 +519,13 @@ export async function semanticSearch(
   const minPriceInSet = Math.min(...prices, 0);
   const maxPriceInSet = Math.max(...prices, 1);
 
-  // Score all products.
-  //
-  // IMPORTANT: We do NOT apply a keyword boost here anymore. The previous
-  // implementation added `matchedTerms/totalTerms * 0.5` to the semantic score,
-  // which made α unable to reflect *pure* semantic similarity and let
-  // keyword-matching products outrank semantically-similar ones for no reason.
-  // Lexical overlap is already implicitly captured in the BGE embedding.
+  // Score all products with hybrid semantic + keyword ranking.
   let scoredProducts = productsWithEmbeddings.map(({ product, embedding }) => {
-    // Semantic score: cosine similarity between query and product embeddings
-    // from the same BGE model. If a product has no embedding stored yet, we
-    // flag it as a miss (semantic = 0) rather than inventing a TF-IDF vector,
-    // which would sit in a completely different space from the BGE query.
+    // Semantic score: cosine similarity between query and product embeddings.
     let rawSemantic = 0;
     if (Array.isArray(embedding) && embedding.length === queryEmbedding.length) {
       rawSemantic = cosineSimilarity(queryEmbedding, embedding as number[]);
     }
-    // Clamp to [0,1]: BGE embeddings are unit-normalized and in practice
-    // produce non-negative cosines for semantically-related text, but we
-    // clip negatives rather than remap [-1,1] → [0,1] (which would compress
-    // the discriminative range and make ranking collapse into the tie-breakers).
     const semanticScore = Math.max(0, Math.min(1, rawSemantic));
 
     const ratingScore = normalizeRatingScore(product.rating ? Number(product.rating) : null);
@@ -473,18 +537,20 @@ export async function semanticSearch(
     const stockScore = normalizeStockScore(product.availability, product.stockQuantity);
     const recencyScore = normalizeRecencyScore(product.createdAt);
 
-    // Lexical overlap is still tracked for the explanation UI, but it is NOT
-    // added to the final score.
+    // Keyword/exact-match score — purely lexical, no embedding needed.
+    const keywordScore = computeKeywordScore(query, product);
+
     const productText = `${product.title} ${product.description || ""} ${product.category || ""}`;
     const matchedTerms = extractMatchedTerms(query, productText);
 
-    // Weighted final score: pure linear combination of the 5 normalized signals.
+    // Weighted final score: hybrid semantic + keyword + other signals.
     const finalScore =
       alpha * semanticScore +
       beta * ratingScore +
       gamma * priceScore +
       delta * stockScore +
-      epsilon * recencyScore;
+      epsilon * recencyScore +
+      KAPPA * keywordScore;
 
     return {
       product,
@@ -495,6 +561,7 @@ export async function semanticSearch(
         price: priceScore,
         stock: stockScore,
         recency: recencyScore,
+        keyword: keywordScore,
       },
       matchedTerms,
       explanation: "",
@@ -571,8 +638,6 @@ export async function semanticSearch(
 
 /**
  * Build the text passed to the embedding model for a single product.
- * Keep this stable — the embeddings stored in the DB must have been produced
- * from the same template so that queries and products share a representation.
  */
 function buildProductText(product: {
   title?: string | null;
@@ -593,14 +658,7 @@ function buildProductText(product: {
 }
 
 /**
- * Generate embedding for a product and store it.
- *
- * This calls the Python AI service (Sentence-BERT / BGE) to get a REAL
- * neural embedding. The previous implementation secretly fell back to a
- * TF-IDF hash vector, which is NOT comparable to the query embeddings
- * produced by the AI service — that silently broke semantic search for
- * common queries like "shoes" or "gaming laptop" because the product
- * vectors and query vectors lived in different spaces.
+ * Generate embedding for a product and store it using the local model.
  */
 export async function generateProductEmbedding(productId: number): Promise<boolean> {
   try {
@@ -611,19 +669,7 @@ export async function generateProductEmbedding(productId: number): Promise<boole
     }
 
     const textToEmbed = buildProductText(product);
-
-    // Hard dependency on the AI service. If it's down we refuse to write
-    // fake vectors into the DB so a future real call isn't polluted.
-    const healthy = await checkAIServiceHealth();
-    if (!healthy) {
-      console.error(
-        "[SemanticSearch] AI service unavailable — refusing to write a non-BGE vector for product",
-        productId,
-      );
-      return false;
-    }
-
-    const embedding = await generateEmbeddingViaAI(textToEmbed);
+    const embedding = await localEmbedding.generatePassageEmbedding(textToEmbed);
 
     await createEmbedding({
       productId,
@@ -639,11 +685,7 @@ export async function generateProductEmbedding(productId: number): Promise<boole
 }
 
 /**
- * Batch generate embeddings for multiple products.
- *
- * Uses the Python /embed/batch endpoint so a full regeneration is fast
- * (one HTTP call per chunk instead of one per product). Chunks are sized
- * conservatively to stay well under typical request-body limits.
+ * Batch generate embeddings for multiple products using local model.
  */
 export async function batchGenerateEmbeddings(
   productIds: number[],
@@ -651,16 +693,7 @@ export async function batchGenerateEmbeddings(
 ): Promise<{ success: number; failed: number }> {
   if (productIds.length === 0) return { success: 0, failed: 0 };
 
-  const healthy = await checkAIServiceHealth();
-  if (!healthy) {
-    console.error("[SemanticSearch] AI service unavailable — aborting batch embedding");
-    return { success: 0, failed: productIds.length };
-  }
-
-  // Smaller chunks for cloud deployments with limited RAM (Render free = 512MB)
-  const aiUrl = process.env.AI_SERVICE_URL || "http://localhost:8000";
-  const isRemote = !aiUrl.includes("localhost");
-  const CHUNK_SIZE = isRemote ? 8 : 32;
+  const CHUNK_SIZE = 16; // Conservative for CPU inference
   let success = 0;
   let failed = 0;
   let completed = 0;
@@ -669,14 +702,12 @@ export async function batchGenerateEmbeddings(
     const chunkIds = productIds.slice(offset, offset + CHUNK_SIZE);
     try {
       const products = await getProductsByIds(chunkIds);
-      // Preserve order: map id → product so missing products become empty strings
       const byId = new Map(products.map(p => [p.id, p]));
       const texts = chunkIds.map(id => {
         const p = byId.get(id);
         return p ? buildProductText(p) : "";
       });
 
-      // Skip empty texts (missing products) up front
       const toEmbedIndexes = texts
         .map((t, i) => (t.trim().length > 0 ? i : -1))
         .filter(i => i >= 0);
@@ -689,16 +720,15 @@ export async function batchGenerateEmbeddings(
 
       const filteredTexts = toEmbedIndexes.map(i => texts[i]);
 
-      // Try batch first; if it fails (e.g. OOM on small servers), fall back to one-by-one
+      // Try batch first
       let embeddings: number[][] | null = null;
       try {
-        embeddings = await generateBatchEmbeddingsViaAI(filteredTexts);
+        embeddings = await localEmbedding.generateBatchPassageEmbeddings(filteredTexts);
       } catch (batchErr) {
         console.warn("[SemanticSearch] Batch embed failed, falling back to single mode:", batchErr);
       }
 
       if (embeddings) {
-        // Batch succeeded — persist each one
         for (let k = 0; k < toEmbedIndexes.length; k++) {
           const localIdx = toEmbedIndexes[k];
           const productId = chunkIds[localIdx];
@@ -715,12 +745,12 @@ export async function batchGenerateEmbeddings(
           }
         }
       } else {
-        // Fallback: embed one product at a time via /embed (single text)
+        // Fallback: embed one product at a time
         for (let k = 0; k < toEmbedIndexes.length; k++) {
           const localIdx = toEmbedIndexes[k];
           const productId = chunkIds[localIdx];
           try {
-            const embedding = await generateEmbeddingViaAI(filteredTexts[k]);
+            const embedding = await localEmbedding.generatePassageEmbedding(filteredTexts[k]);
             await createEmbedding({
               productId,
               embedding,
@@ -731,11 +761,8 @@ export async function batchGenerateEmbeddings(
             console.error("[SemanticSearch] Single embed failed for", productId, e);
             failed++;
           }
-          // Small delay between single requests
-          if (isRemote) await new Promise(r => setTimeout(r, 200));
         }
       }
-      // Count the skipped (missing product) rows as failures
       failed += chunkIds.length - toEmbedIndexes.length;
     } catch (error) {
       console.error(
@@ -747,11 +774,6 @@ export async function batchGenerateEmbeddings(
 
     completed += chunkIds.length;
     onProgress?.(completed, productIds.length);
-
-    // Small delay between chunks to avoid overwhelming the AI service
-    if (isRemote && offset + CHUNK_SIZE < productIds.length) {
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
   }
 
   return { success, failed };

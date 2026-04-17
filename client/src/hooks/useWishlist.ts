@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { trpc } from "@/lib/trpc";
 
 export interface WishlistItem {
   productId: number;
@@ -55,13 +56,21 @@ export function useWishlist() {
     }
   }, [items, isInitialized]);
 
+  // Server-side interaction tracking (fire-and-forget)
+  const recordInteraction = trpc.session.recordInteraction.useMutation();
+
   const addItem = useCallback((item: Omit<WishlistItem, "addedAt">) => {
     setItems((prev) => {
       const exists = prev.some((i) => i.productId === item.productId);
       if (exists) return prev;
+      // Track wishlist addition on the server for recommendations
+      recordInteraction.mutate({
+        productId: item.productId,
+        interactionType: "wishlist_add",
+      });
       return [...prev, { ...item, addedAt: new Date().toISOString() }];
     });
-  }, []);
+  }, [recordInteraction]);
 
   const removeItem = useCallback((productId: number) => {
     setItems((prev) => prev.filter((i) => i.productId !== productId));
@@ -73,9 +82,14 @@ export function useWishlist() {
       if (exists) {
         return prev.filter((i) => i.productId !== item.productId);
       }
+      // Track wishlist addition on the server for recommendations
+      recordInteraction.mutate({
+        productId: item.productId,
+        interactionType: "wishlist_add",
+      });
       return [...prev, { ...item, addedAt: new Date().toISOString() }];
     });
-  }, []);
+  }, [recordInteraction]);
 
   const isInWishlist = useCallback((productId: number) => {
     return items.some((i) => i.productId === productId);

@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { trpc } from "@/lib/trpc";
 
 export interface CartItem {
   productId: number;
@@ -55,6 +56,9 @@ export function useCart() {
     }
   }, [items, isInitialized]);
 
+  // Server-side interaction tracking (fire-and-forget)
+  const recordInteraction = trpc.session.recordInteraction.useMutation();
+
   const addItem = useCallback((item: CartItem) => {
     setItems((prev) => {
       const existing = prev.find((i) => i.productId === item.productId);
@@ -65,9 +69,14 @@ export function useCart() {
             : i
         );
       }
+      // Track cart addition on the server for recommendations (only for new items)
+      recordInteraction.mutate({
+        productId: item.productId,
+        interactionType: "add_to_cart",
+      });
       return [...prev, item];
     });
-  }, []);
+  }, [recordInteraction]);
 
   const removeItem = useCallback((productId: number) => {
     setItems((prev) => prev.filter((i) => i.productId !== productId));

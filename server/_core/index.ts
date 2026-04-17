@@ -1,12 +1,14 @@
 import "dotenv/config";
 import express from "express";
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import { createServer } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import { COOKIE_NAME, ONE_YEAR_MS, SESSION_EXPIRY_MS } from "@shared/const";
 import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
 import * as db from "../db";
@@ -53,89 +55,158 @@ async function startServer() {
   const app = express();
   const server = createServer(app);
   // Configure body parser with larger size limit for file uploads
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  app.use(express.json({ limit: "10mb" }));
+  app.use(express.urlencoded({ limit: "10mb", extended: true }));
+  // ── Security headers ──
+  app.use(helmet({
+    contentSecurityPolicy: process.env.NODE_ENV === 'production'
+      ? {
+          directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'"],
+            styleSrc: ["'self'", "'unsafe-inline'"],  // needed for Tailwind/shadcn
+            imgSrc: ["'self'", "data:", "https:"],     // product images from external CDNs
+            connectSrc: ["'self'"],
+            fontSrc: ["'self'"],
+            objectSrc: ["'none'"],
+            frameAncestors: ["'none'"],
+            baseUri: ["'self'"],
+            formAction: ["'self'"],
+          },
+        }
+      : false,  // disabled in dev for Vite HMR
+    crossOriginOpenerPolicy: { policy: "same-origin" },
+    crossOriginResourcePolicy: { policy: "same-origin" },
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+  }));
 
-  // --- Local dev login ---
-  app.post("/api/auth/dev-login", async (req, res) => {
-    try {
-      const email = String(req.body?.email ?? "").trim().toLowerCase();
-      if (!email) return res.status(400).json({ error: "email is required" });
-
-      // Use OWNER_OPEN_ID as the admin openId so you get admin permissions locally
-      const openId = process.env.OWNER_OPEN_ID || "dev-admin";
-      const name = email.split("@")[0] || "dev-user";
-
-      await db.upsertUser({
-        openId,
-        name,
-        email,
-        loginMethod: "dev",
-        role: "admin",
-        lastSignedIn: new Date(),
-      });
-
-      const user = await db.getUserByOpenId(openId);
-      if (!user) {
-        return res.status(503).json({
-          error: "dev-login requires a running database (start smartcart-postgres)",
-        });
-      }
-
-      const sessionToken = await sdk.createSessionToken(openId, {
-        name,
-        expiresInMs: ONE_YEAR_MS,
-      });
-
-      const cookieOptions = getSessionCookieOptions(req);
-      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
-
-      return res.json({ openId, name, email });
-    } catch (e) {
-      console.error("[DevLogin] failed", e);
-      return res.status(500).json({ error: "dev-login failed" });
+  // ── CORS — only allow our own origin ──
+  const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(",").map(o => o.trim())
+    : [];
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && ALLOWED_ORIGINS.includes(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
+    if (req.method === "OPTIONS") return res.sendStatus(204);
+    next();
   });
 
-  // Browser-friendly login (clickable URL)
-  app.get("/api/auth/dev-login", async (req, res) => {
-    try {
-      const email = String(req.query.email ?? "admin@local").trim().toLowerCase();
-      const name = String(req.query.name ?? "Dev Admin").trim();
-      const openId = process.env.OWNER_OPEN_ID || "dev-admin";
-
-      await db.upsertUser({
-        openId,
-        name,
-        email,
-        loginMethod: "dev",
-        role: "admin",
-        lastSignedIn: new Date(),
-      });
-
-      const user = await db.getUserByOpenId(openId);
-      if (!user) {
-        return res.status(503).json({
-          error: "dev-login requires a running database (start smartcart-postgres)",
-        });
-      }
-
-      const sessionToken = await sdk.createSessionToken(openId, {
-        name,
-        expiresInMs: ONE_YEAR_MS,
-      });
-
-      const cookieOptions = getSessionCookieOptions(req);
-      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
-
-      const redirectParam = String(req.query.redirect ?? "/admin");
-      const safeRedirect = redirectParam.startsWith("/") ? redirectParam : "/admin";
-      return res.redirect(safeRedirect);
-    } catch (e) {
-      console.error("[DevLogin] GET failed", e);
-      return res.status(500).send("dev-login failed");
-    }
+  // ── Rate limiting ──
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,       // 15-minute window
+    max: 5,                           // 5 attempts (down from 20)
+    message: { error: 'Too many attempts, please try again later' },
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,     // only count failed attempts
   });
+
+  const generalApiLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000,        // 1-minute window
+    max: 100,                         // 100 requests per minute per IP
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+  app.use('/api/auth/login', authLimiter);
+  app.use('/api/auth/register', authLimiter);
+  app.use('/api/auth/forgot-password', authLimiter);
+  app.use('/api/auth/reset-password', authLimiter);
+  app.use('/api/auth/change-password', authLimiter);
+  app.use('/api/auth/resend-verification', authLimiter);
+  app.use('/api/', generalApiLimiter);
+
+  // --- Local dev login (ONLY available in explicit development mode) ---
+  if (process.env.NODE_ENV === 'development') {
+    app.post("/api/auth/dev-login", async (req, res) => {
+      try {
+        const email = String(req.body?.email ?? "").trim().toLowerCase();
+        if (!email) return res.status(400).json({ error: "email is required" });
+
+        // Use OWNER_OPEN_ID as the admin openId so you get admin permissions locally
+        const openId = process.env.OWNER_OPEN_ID || "dev-admin";
+        const name = email.split("@")[0] || "dev-user";
+
+        await db.upsertUser({
+          openId,
+          name,
+          email,
+          loginMethod: "dev",
+          role: "admin",
+          lastSignedIn: new Date(),
+        });
+
+        const user = await db.getUserByOpenId(openId);
+        if (!user) {
+          return res.status(503).json({
+            error: "dev-login requires a running database (start smartcart-postgres)",
+          });
+        }
+
+        const sessionToken = await sdk.createSessionToken(openId, {
+          name,
+          expiresInMs: ONE_YEAR_MS,
+        });
+
+        const cookieOptions = getSessionCookieOptions(req);
+        res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+
+        return res.json({ openId, name, email });
+      } catch (e) {
+        console.error("[DevLogin] failed", e);
+        return res.status(500).json({ error: "dev-login failed" });
+      }
+    });
+
+    // Browser-friendly login (clickable URL)
+    app.get("/api/auth/dev-login", async (req, res) => {
+      try {
+        const email = String(req.query.email ?? "admin@local").trim().toLowerCase();
+        const name = String(req.query.name ?? "Dev Admin").trim();
+        const openId = process.env.OWNER_OPEN_ID || "dev-admin";
+
+        await db.upsertUser({
+          openId,
+          name,
+          email,
+          loginMethod: "dev",
+          role: "admin",
+          lastSignedIn: new Date(),
+        });
+
+        const user = await db.getUserByOpenId(openId);
+        if (!user) {
+          return res.status(503).json({
+            error: "dev-login requires a running database (start smartcart-postgres)",
+          });
+        }
+
+        const sessionToken = await sdk.createSessionToken(openId, {
+          name,
+          expiresInMs: ONE_YEAR_MS,
+        });
+
+        const cookieOptions = getSessionCookieOptions(req);
+        res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+
+        const redirectParam = String(req.query.redirect ?? "/admin");
+        const safeRedirect = redirectParam.startsWith("/") ? redirectParam : "/admin";
+        return res.redirect(safeRedirect);
+      } catch (e) {
+        console.error("[DevLogin] GET failed", e);
+        return res.status(500).send("dev-login failed");
+      }
+    });
+  } else {
+    app.all("/api/auth/dev-login", (_req, res) => {
+      return res.status(404).json({ error: "Not found" });
+    });
+  }
 
   // ==================== AUTH ENDPOINTS ====================
 
@@ -161,15 +232,20 @@ async function startServer() {
       if (!password || typeof password !== "string" || password.length < 8) {
         return res.status(400).json({ error: "Password must be at least 8 characters" });
       }
+      const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
+      if (!passwordRegex.test(password)) {
+        return res.status(400).json({ error: "Password must contain at least one uppercase letter, one lowercase letter, and one number" });
+      }
 
       const normalizedEmail = email.trim().toLowerCase();
 
       const existingUser = await db.getUserByEmail(normalizedEmail);
       if (existingUser) {
-        return res.status(409).json({ error: "Email already registered" });
+        // Send a "someone tried to register" email to existing user, but return same 201 to caller
+        return res.status(201).json({ message: "If this email is valid, a verification link has been sent." });
       }
 
-      const passwordHash = await bcrypt.hash(password, 10);
+      const passwordHash = await bcrypt.hash(password, 12);
       const verificationToken = randomBytes(32).toString("hex");
       const verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
@@ -282,6 +358,7 @@ async function startServer() {
 
       const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
       if (!isPasswordValid) {
+        console.warn(`[Auth] Failed login attempt for: ${normalizedEmail} from IP: ${req.ip}`);
         return res.status(401).json({ error: "Invalid email or password" });
       }
 
@@ -304,11 +381,11 @@ async function startServer() {
 
       const sessionToken = await sdk.createSessionToken(user.openId, {
         name: user.name || "",
-        expiresInMs: ONE_YEAR_MS,
+        expiresInMs: SESSION_EXPIRY_MS,
       });
 
       const cookieOptions = getSessionCookieOptions(req);
-      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: SESSION_EXPIRY_MS });
 
       return res.json({
         success: true,
@@ -364,6 +441,10 @@ async function startServer() {
       if (password.length < 8) {
         return res.status(400).json({ error: "Password must be at least 8 characters" });
       }
+      const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
+      if (!passwordRegex.test(password)) {
+        return res.status(400).json({ error: "Password must contain at least one uppercase letter, one lowercase letter, and one number" });
+      }
 
       const user = await db.getUserByPasswordResetToken(token);
       if (!user) {
@@ -374,7 +455,7 @@ async function startServer() {
         return res.status(400).json({ error: "Reset link has expired. Please request a new one." });
       }
 
-      const passwordHash = await bcrypt.hash(password, 10);
+      const passwordHash = await bcrypt.hash(password, 12);
       await db.resetUserPassword(user.id, passwordHash);
 
       return res.json({ success: true, message: "Password reset successfully" });
@@ -384,72 +465,45 @@ async function startServer() {
     }
   });
 
-  // ── Diagnostic: test email (Resend) ──
-  // Usage: GET /api/auth/test-email?to=you@example.com
-  app.get("/api/auth/test-email", async (req, res) => {
-    const resendKey = process.env.RESEND_API_KEY;
-    const resendFrom = process.env.RESEND_FROM_EMAIL;
-    const baseUrl = process.env.BASE_URL;
-    const toParam = typeof req.query.to === "string" ? req.query.to : undefined;
+  // ── Diagnostic: test email (Resend) — DEV ONLY ──
+  // Completely disabled in production to prevent credential leakage and email relay abuse.
+  if (process.env.NODE_ENV === 'development') {
+    app.get("/api/auth/test-email", async (req, res) => {
+      const resendKey = process.env.RESEND_API_KEY;
+      const resendFrom = process.env.RESEND_FROM_EMAIL;
+      const toParam = typeof req.query.to === "string" ? req.query.to : undefined;
 
-    if (!resendKey) {
-      return res.json({
-        success: false, error: "No email provider configured",
-        detail: { RESEND_API_KEY: "MISSING" },
-        hint: "Set RESEND_API_KEY (and optionally RESEND_FROM_EMAIL for a verified sender) in your environment, then redeploy.",
-      });
-    }
-
-    try {
-      const recipient = toParam || "test@example.com";
-      const fromAddress = resendFrom || "Pick N Take Test <onboarding@resend.dev>";
-      const r = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          from: fromAddress,
-          to: [recipient],
-          subject: "Pick N Take Email Test - " + new Date().toISOString(),
-          html: "<p>If you see this, Resend email is working!</p>",
-        }),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        const usingDefaultFrom = !resendFrom;
-        const looksLikeFreeTierBlock =
-          r.status === 403 ||
-          (typeof data?.message === "string" &&
-            /only send.*own email|verify a domain/i.test(data.message));
-        return res.json({
-          success: false,
-          status: r.status,
-          error: data?.message || data?.error || `HTTP ${r.status}`,
-          data,
-          sentFrom: fromAddress,
-          sentTo: recipient,
-          config: {
-            BASE_URL: baseUrl,
-            RESEND_FROM_EMAIL: resendFrom ? "SET" : "MISSING (using onboarding@resend.dev)",
-          },
-          hint: looksLikeFreeTierBlock && usingDefaultFrom
-            ? "Resend's free default sender (onboarding@resend.dev) can ONLY deliver to the email you signed up to Resend with. To send to anyone else you must (a) verify a domain in the Resend dashboard and set RESEND_FROM_EMAIL=\"YourApp <noreply@yourdomain.com>\", OR (b) test only with the email tied to your Resend account."
-            : undefined,
-        });
+      if (!resendKey) {
+        return res.json({ success: false, error: "No email provider configured" });
       }
-      return res.json({
-        success: true,
-        messageId: data.id,
-        sentFrom: fromAddress,
-        sentTo: recipient,
-        config: {
-          BASE_URL: baseUrl,
-          RESEND_FROM_EMAIL: resendFrom ? "SET" : "MISSING (using onboarding@resend.dev)",
-        },
-      });
-    } catch (err: any) {
-      return res.json({ success: false, error: err.message || String(err), code: err.code });
-    }
-  });
+
+      try {
+        const recipient = toParam || "test@example.com";
+        const fromAddress = resendFrom || "Pick N Take Test <onboarding@resend.dev>";
+        const r = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from: fromAddress,
+            to: [recipient],
+            subject: "Pick N Take Email Test - " + new Date().toISOString(),
+            html: "<p>If you see this, Resend email is working!</p>",
+          }),
+        });
+        const data = await r.json().catch(() => ({}));
+        return res.json({
+          success: r.ok,
+          messageId: data.id,
+          sentTo: recipient,
+          status: r.status,
+        });
+      } catch (err: any) {
+        return res.json({ success: false, error: err.message || String(err) });
+      }
+    });
+  } else {
+    app.all("/api/auth/test-email", (_req, res) => res.status(404).json({ error: "Not found" }));
+  }
 
   // ==================== DELETE ACCOUNT ENDPOINTS ====================
 
@@ -498,9 +552,11 @@ async function startServer() {
       }
 
       // Create HMAC-signed deletion token
+      const hmacSecret = process.env.JWT_SECRET;
+      if (!hmacSecret) { return res.status(500).json({ error: "Server configuration error" }); }
       const expiresAt = Date.now() + 3600000; // 1 hour
       const hmac = crypto
-        .createHmac("sha256", process.env.JWT_SECRET || "fallback")
+        .createHmac("sha256", hmacSecret)
         .update(`delete:${user.id}:${expiresAt}`)
         .digest("hex");
       const token = `${user.id}:${expiresAt}:${hmac}`;
@@ -542,12 +598,15 @@ async function startServer() {
       }
 
       // Verify HMAC
+      const hmacSecret = process.env.JWT_SECRET;
+      if (!hmacSecret) { return res.status(500).json({ error: "Server configuration error" }); }
       const expectedHmac = crypto
-        .createHmac("sha256", process.env.JWT_SECRET || "fallback")
+        .createHmac("sha256", hmacSecret)
         .update(`delete:${userId}:${expiresAt}`)
         .digest("hex");
 
-      if (providedHmac !== expectedHmac) {
+      const isHmacValid = crypto.timingSafeEqual(Buffer.from(providedHmac, 'hex'), Buffer.from(expectedHmac, 'hex'));
+      if (!isHmacValid) {
         return res.status(400).json({ error: "Invalid token" });
       }
 
@@ -703,7 +762,7 @@ async function startServer() {
         }
       }
 
-      const newHash = await bcrypt.hash(newPassword, 10);
+      const newHash = await bcrypt.hash(newPassword, 12);
       await db.resetUserPassword(user.id, newHash);
 
       return res.json({ success: true, message: "Password changed successfully" });

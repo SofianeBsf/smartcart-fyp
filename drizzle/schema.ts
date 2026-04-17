@@ -14,7 +14,7 @@ import {
 
 const userRoleEnum = pgEnum("role", ["user", "admin"]);
 const availabilityEnum = pgEnum("availability", ["in_stock", "low_stock", "out_of_stock"]);
-const interactionTypeEnum = pgEnum("interaction_type", ["view", "click", "search_click", "add_to_cart", "purchase"]);
+const interactionTypeEnum = pgEnum("interaction_type", ["view", "click", "search_click", "add_to_cart", "wishlist_add", "purchase"]);
 const uploadStatusEnum = pgEnum("status", ["pending", "processing", "embedding", "completed", "failed"]);
 const metricTypeEnum = pgEnum("metric_type", ["ndcg@10", "recall@10", "precision@10", "mrr", "custom"]);
 
