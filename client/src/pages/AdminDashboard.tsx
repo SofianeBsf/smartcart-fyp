@@ -798,12 +798,11 @@ function CatalogTab() {
           </div>
 
           {/* Category + Brand row */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-4 items-start">
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium">Category <span className="text-destructive">*</span></Label>
-                <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs text-muted-foreground hover:text-primary gap-1" onClick={() => setShowCategoryManager(true)}>
-                  <Settings2 className="w-3 h-3" />
+              <div className="flex items-center gap-1.5 h-5">
+                <Label className="text-sm font-medium leading-none">Category <span className="text-destructive">*</span></Label>
+                <Button type="button" variant="outline" size="sm" className="h-5 px-1.5 text-[10px] leading-none text-muted-foreground hover:text-primary rounded-sm border-muted-foreground/30" onClick={() => setShowCategoryManager(true)}>
                   Manage
                 </Button>
               </div>
@@ -814,9 +813,9 @@ function CatalogTab() {
                     onChange={e => setNewCategoryName(e.target.value)}
                     onBlur={() => markTouched("category")}
                     placeholder="New category"
-                    className="flex-1 h-9"
+                    className="min-w-0 flex-1 h-9"
                   />
-                  <Button type="button" variant="ghost" size="sm" className="h-9 px-2" onClick={() => { setIsCreatingCategory(false); setNewCategoryName(""); }}>
+                  <Button type="button" variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => { setIsCreatingCategory(false); setNewCategoryName(""); }}>
                     <X className="w-4 h-4" />
                   </Button>
                 </div>
@@ -834,7 +833,7 @@ function CatalogTab() {
                     }
                   }}
                 >
-                  <SelectTrigger className="h-9"><SelectValue placeholder="Select category" /></SelectTrigger>
+                  <SelectTrigger className="h-9 w-full"><SelectValue placeholder="Select category" /></SelectTrigger>
                   <SelectContent>
                     {categories.map((cat: string) => (
                       <SelectItem key={cat} value={cat}>{cat}</SelectItem>
@@ -848,7 +847,9 @@ function CatalogTab() {
               {fieldError("category") && <p className="text-xs text-destructive">{fieldError("category")}</p>}
             </div>
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium">Brand <span className="text-destructive">*</span></Label>
+              <div className="h-5 flex items-center">
+                <Label className="text-sm font-medium leading-none">Brand <span className="text-destructive">*</span></Label>
+              </div>
               <Input value={form.brand} onChange={e => setForm(f => ({ ...f, brand: e.target.value }))} onBlur={() => markTouched("brand")} placeholder="e.g. Samsung" className="h-9" />
               {fieldError("brand") && <p className="text-xs text-destructive">{fieldError("brand")}</p>}
             </div>

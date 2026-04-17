@@ -1,8 +1,9 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch } from "wouter";
+import { Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
+import Footer from "./components/Footer";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
 import Search from "./pages/Search";
@@ -43,6 +44,14 @@ function Router() {
   );
 }
 
+const AUTH_ROUTES = ["/login", "/register", "/forgot-password", "/verify-email", "/reset-password"];
+
+function AppFooter() {
+  const [location] = useLocation();
+  if (AUTH_ROUTES.includes(location)) return null;
+  return <Footer />;
+}
+
 function App() {
   return (
     <ErrorBoundary>
@@ -50,6 +59,7 @@ function App() {
         <TooltipProvider>
           <Toaster />
           <Router />
+          <AppFooter />
           <ChatWidget />
         </TooltipProvider>
       </ThemeProvider>

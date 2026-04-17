@@ -53,7 +53,8 @@ export default function Header() {
           }}
           className="flex items-center gap-2 shrink-0"
         >
-          <img src="/pickntake-logo.svg" alt="Pick N Take" className="h-8" />
+          <img src="/pickntake-icon.svg" alt="Pick N Take" className="h-8 sm:hidden" />
+          <img src="/pickntake-logo.svg" alt="Pick N Take" className="h-8 hidden sm:block" />
         </a>
 
         {/* Search Bar */}
