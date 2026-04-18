@@ -120,15 +120,12 @@ export default function Register() {
     <div className="min-h-screen bg-background flex flex-col lg:flex-row">
       {/* Left side - Branding */}
       <div className="hidden lg:flex lg:w-1/2 gradient-hero flex-col items-center justify-center p-12">
-        <div className="text-center space-y-6">
-          <img src="/pickntake-icon.svg" alt="Pick N Take" className="w-20 h-20 mx-auto" />
-          <div>
-            <h1 className="text-4xl font-bold mb-2">Pick N Take</h1>
-            <p className="text-lg text-muted-foreground">
-              Join us and start shopping smarter
-            </p>
-          </div>
-        </div>
+        <a href="/" className="block text-center space-y-6">
+          <img src="/pickntake-logo.svg" alt="Pick N Take" className="h-16 mx-auto" />
+          <p className="text-lg text-muted-foreground">
+            Join us and start shopping smarter
+          </p>
+        </a>
       </div>
 
       {/* Right side - Registration Form */}

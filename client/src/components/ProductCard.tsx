@@ -157,11 +157,19 @@ export default function ProductCard({
             <div className="flex items-center justify-between">
               <div>
                 {product.price && (
-                  <p className="text-lg font-bold text-primary">
-                    {formatPrice(product.price, product.currency)}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-lg font-bold text-primary">
+                      {formatPrice(product.price, product.currency)}
+                    </p>
+                    {product.originalPrice &&
+                      parseFloat(product.originalPrice) > parseFloat(product.price) && (
+                      <span className="text-xs font-semibold text-red-600">
+                        -{Math.round(((parseFloat(product.originalPrice) - parseFloat(product.price)) / parseFloat(product.originalPrice)) * 100)}%
+                      </span>
+                    )}
+                  </div>
                 )}
-                {product.originalPrice && product.price && 
+                {product.originalPrice && product.price &&
                   parseFloat(product.originalPrice) > parseFloat(product.price) && (
                   <p className="text-xs text-muted-foreground line-through">
                     {formatPrice(product.originalPrice, product.currency)}

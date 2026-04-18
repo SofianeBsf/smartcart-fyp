@@ -343,43 +343,31 @@ function generateExplanation(
   matchedTerms: string[],
   weights: RankingWeight
 ): string {
+  const MAX_PARTS = 3;
   const parts: string[] = [];
 
-  // Keyword/exact match explanation (highest priority)
+  // 1. Match quality (pick ONE — most important signal)
   if (scores.keyword != null && scores.keyword >= 0.85) {
-    parts.push("Exact name match");
+    parts.push("Exact match");
   } else if (scores.keyword != null && scores.keyword >= 0.5) {
-    parts.push("Strong keyword match");
-  }
-
-  // Semantic match explanation
-  if (scores.semantic > 0.5) {
-    parts.push(`High semantic match (${(scores.semantic * 100).toFixed(0)}%)`);
+    parts.push("Keyword match");
+  } else if (scores.semantic > 0.5) {
+    parts.push(`${(scores.semantic * 100).toFixed(0)}% relevant`);
   } else if (scores.semantic > 0.3) {
-    parts.push(`Moderate semantic match (${(scores.semantic * 100).toFixed(0)}%)`);
+    parts.push(`${(scores.semantic * 100).toFixed(0)}% relevant`);
   }
 
-  // Matched terms
-  if (matchedTerms.length > 0) {
-    parts.push(`Matches: ${matchedTerms.slice(0, 3).join(", ")}`);
+  // 2. Rating (only if notable)
+  if (parts.length < MAX_PARTS && product.rating && Number(product.rating) >= 4) {
+    parts.push(`${Number(product.rating).toFixed(1)}★`);
   }
 
-  // Rating
-  if (product.rating && Number(product.rating) >= 4) {
-    parts.push(`Highly rated (${product.rating}★)`);
-  }
-
-  // Price value
-  if (scores.price > 0.7) {
+  // 3. Price value (only if notably good)
+  if (parts.length < MAX_PARTS && scores.price > 0.7) {
     parts.push("Great value");
   }
 
-  // Availability
-  if (product.availability === "in_stock") {
-    parts.push("In stock");
-  }
-
-  return parts.length > 0 ? parts.join(" • ") : "Relevant to your search";
+  return parts.length > 0 ? parts.join(" · ") : "Relevant to your search";
 }
 
 /**

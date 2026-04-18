@@ -2,7 +2,7 @@ import { neon } from "@neondatabase/serverless";
 import { drizzle as drizzleNeon } from "drizzle-orm/neon-http";
 import { drizzle as drizzlePg } from "drizzle-orm/node-postgres";
 import pg from "pg";
-import { eq, and, desc, sql, inArray } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, gte, lte, or, ilike } from "drizzle-orm";
 import {
   InsertUser, users,
   products, InsertProduct, Product,
@@ -713,6 +713,69 @@ export async function getProductCount() {
   if (!db) return 0;
   
   const result = await db.select({ count: sql<number>`count(*)` }).from(products);
+  return result[0]?.count ?? 0;
+}
+
+interface ProductFilterParams {
+  search?: string;
+  category?: string;
+  stock?: "in_stock" | "low_stock" | "out_of_stock";
+  minPrice?: number;
+  maxPrice?: number;
+  limit?: number;
+  offset?: number;
+}
+
+function buildProductFilterConditions(params: ProductFilterParams) {
+  const conditions = [];
+
+  if (params.search) {
+    const term = `%${params.search.trim()}%`;
+    conditions.push(
+      or(
+        ilike(products.title, term),
+        ilike(products.category, term),
+        ilike(products.brand, term),
+      )!
+    );
+  }
+  if (params.category) {
+    conditions.push(eq(products.category, params.category));
+  }
+  if (params.stock) {
+    conditions.push(eq(products.availability, params.stock));
+  }
+  if (params.minPrice !== undefined) {
+    conditions.push(gte(products.price, String(params.minPrice)));
+  }
+  if (params.maxPrice !== undefined) {
+    conditions.push(lte(products.price, String(params.maxPrice)));
+  }
+
+  return conditions.length > 0 ? and(...conditions) : undefined;
+}
+
+export async function getFilteredProducts(params: ProductFilterParams) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const where = buildProductFilterConditions(params);
+  const query = db.select().from(products);
+  const withWhere = where ? query.where(where) : query;
+  return withWhere
+    .orderBy(desc(products.createdAt))
+    .limit(params.limit ?? 20)
+    .offset(params.offset ?? 0);
+}
+
+export async function getFilteredProductCount(params: ProductFilterParams) {
+  const db = await getDb();
+  if (!db) return 0;
+
+  const where = buildProductFilterConditions(params);
+  const query = db.select({ count: sql<number>`count(*)` }).from(products);
+  const withWhere = where ? query.where(where) : query;
+  const result = await withWhere;
   return result[0]?.count ?? 0;
 }
 

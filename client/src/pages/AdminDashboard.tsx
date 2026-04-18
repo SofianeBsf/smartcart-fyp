@@ -169,23 +169,20 @@ export default function AdminDashboard() {
             </TabsTrigger>
           </TabsList>
 
-          {/* Overview Tab */}
-          <TabsContent value="overview">
+          {/* forceMount keeps each tab alive so switching doesn't re-fire queries */}
+          <TabsContent value="overview" forceMount className="data-[state=inactive]:hidden">
             <OverviewTab />
           </TabsContent>
 
-          {/* Catalog Tab */}
-          <TabsContent value="catalog">
+          <TabsContent value="catalog" forceMount className="data-[state=inactive]:hidden">
             <CatalogTab />
           </TabsContent>
 
-          {/* Weights Tab */}
-          <TabsContent value="weights">
+          <TabsContent value="weights" forceMount className="data-[state=inactive]:hidden">
             <WeightsTab />
           </TabsContent>
 
-          {/* Logs Tab */}
-          <TabsContent value="logs">
+          <TabsContent value="logs" forceMount className="data-[state=inactive]:hidden">
             <LogsTab />
           </TabsContent>
         </Tabs>
@@ -441,11 +438,25 @@ function CatalogTab() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const utils = trpc.useUtils();
 
-  // Pagination state
+  // Pagination + filter state
   const PAGE_SIZE = 20;
   const [page, setPage] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [filterCategory, setFilterCategory] = useState<string>("");
+  const [filterStock, setFilterStock] = useState<string>("");
+  const [filterMinPrice, setFilterMinPrice] = useState("");
+  const [filterMaxPrice, setFilterMaxPrice] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+
+  // Debounce search input to avoid excessive server queries
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+      setPage(0); // reset to first page on new search
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Dialog states
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -455,7 +466,7 @@ function CatalogTab() {
   // Form state for add/edit
   const emptyForm = {
     title: "", description: "", category: "", brand: "",
-    price: "", imageUrl: "", rating: "",
+    price: "", originalPrice: "", imageUrl: "", rating: "",
     stockQuantity: "100", asin: "",
   };
   const [form, setForm] = useState(emptyForm);
@@ -501,10 +512,17 @@ function CatalogTab() {
   // Fetch categories
   const { data: categories = [] } = trpc.products.categories.useQuery();
 
-  const { data: productList, isLoading } = trpc.products.list.useQuery({
+  const listInput: Record<string, any> = {
     limit: PAGE_SIZE,
     offset: page * PAGE_SIZE,
-  });
+  };
+  if (debouncedSearch) listInput.search = debouncedSearch;
+  if (filterCategory) listInput.category = filterCategory;
+  if (filterStock) listInput.stock = filterStock;
+  if (filterMinPrice) { const n = parseFloat(filterMinPrice); if (!isNaN(n)) listInput.minPrice = n; }
+  if (filterMaxPrice) { const n = parseFloat(filterMaxPrice); if (!isNaN(n)) listInput.maxPrice = n; }
+
+  const { data: productList, isLoading } = trpc.products.list.useQuery(listInput);
   const { data: uploadJobs } = trpc.admin.catalog.jobs.useQuery({ limit: 5 });
 
   const uploadCatalog = trpc.admin.catalog.upload.useMutation({
@@ -570,16 +588,8 @@ function CatalogTab() {
     onError: (error) => toast.error(`Embedding generation failed: ${error.message}`),
   });
 
-  // Filter products client-side by search query
-  const allProducts = productList?.products || [];
-  const filtered = searchQuery.trim()
-    ? allProducts.filter(p =>
-        p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (p.category || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (p.brand || "").toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : allProducts;
-
+  // Products are now filtered server-side
+  const filtered = productList?.products || [];
   const total = productList?.total || 0;
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
@@ -618,6 +628,7 @@ function CatalogTab() {
       category: product.category || "",
       brand: product.brand || "",
       price: product.price || "",
+      originalPrice: product.originalPrice || "",
       imageUrl: product.imageUrl || "",
       rating: product.rating || "",
       stockQuantity: String(product.stockQuantity ?? 100),
@@ -676,6 +687,7 @@ function CatalogTab() {
         category: finalCategory,
         brand: form.brand.trim(),
         price: form.price,
+        originalPrice: form.originalPrice || undefined,
         imageUrl: form.imageUrl,
         rating: form.rating,
         stockQuantity: stockQty,
@@ -687,6 +699,7 @@ function CatalogTab() {
         category: finalCategory,
         brand: form.brand.trim(),
         price: form.price,
+        originalPrice: form.originalPrice || undefined,
         imageUrl: form.imageUrl,
         rating: form.rating,
         stockQuantity: stockQty,
@@ -855,16 +868,32 @@ function CatalogTab() {
             </div>
           </div>
 
-          {/* Price + Rating + Stock row */}
-          <div className="grid grid-cols-3 gap-3">
+          {/* Price + Old Price row */}
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium">Price <span className="text-destructive">*</span></Label>
+              <Label className="text-sm font-medium">Current Price <span className="text-destructive">*</span></Label>
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground font-medium">£</span>
                 <Input type="number" step="0.01" min="0" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} onBlur={() => markTouched("price")} placeholder="29.99" className="pl-7 h-9" />
               </div>
               {fieldError("price") && <p className="text-xs text-destructive">{fieldError("price")}</p>}
             </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium text-muted-foreground">Old Price <span className="text-xs font-normal">(optional)</span></Label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground font-medium">£</span>
+                <Input type="number" step="0.01" min="0" value={form.originalPrice} onChange={e => setForm(f => ({ ...f, originalPrice: e.target.value }))} placeholder="49.99" className="pl-7 h-9" />
+              </div>
+              {form.originalPrice && form.price && parseFloat(form.originalPrice) > parseFloat(form.price) && (
+                <p className="text-xs text-red-600 font-medium">
+                  {Math.round(((parseFloat(form.originalPrice) - parseFloat(form.price)) / parseFloat(form.originalPrice)) * 100)}% discount
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Rating + Stock row */}
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label className="text-sm font-medium">Rating <span className="text-destructive">*</span></Label>
               <Input type="number" step="0.1" min="0" max="5" value={form.rating} onChange={e => setForm(f => ({ ...f, rating: e.target.value }))} onBlur={() => markTouched("rating")} placeholder="4.5" className="h-9" />
@@ -1142,44 +1171,108 @@ function CatalogTab() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {/* Toolbar: search + bulk actions */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 mb-4">
-            <div className="relative flex-1 w-full">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                className="pl-9"
-                placeholder="Search products on this page..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-              />
-            </div>
-            {selectedIds.size > 0 && (
-              <div className="flex items-center gap-2">
-                <Badge variant="secondary">{selectedIds.size} selected</Badge>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={generateSelected.isPending}
-                  onClick={() => generateSelected.mutate({ productIds: Array.from(selectedIds) })}
-                >
-                  {generateSelected.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Brain className="w-4 h-4 mr-1" />}
-                  Generate Embeddings
-                </Button>
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  disabled={deleteMany.isPending}
-                  onClick={() => {
-                    if (confirm(`Delete ${selectedIds.size} product(s)? This cannot be undone.`)) {
-                      deleteMany.mutate({ ids: Array.from(selectedIds) });
-                    }
-                  }}
-                >
-                  {deleteMany.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Trash2 className="w-4 h-4 mr-1" />}
-                  Delete
-                </Button>
+          {/* Toolbar: search + filters + bulk actions */}
+          <div className="space-y-3 mb-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+              <div className="relative flex-1 w-full">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  className="pl-9"
+                  placeholder="Search all products..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                />
               </div>
-            )}
+              {selectedIds.size > 0 && (
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary">{selectedIds.size} selected</Badge>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={generateSelected.isPending}
+                    onClick={() => generateSelected.mutate({ productIds: Array.from(selectedIds) })}
+                  >
+                    {generateSelected.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Brain className="w-4 h-4 mr-1" />}
+                    Generate Embeddings
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={deleteMany.isPending}
+                    onClick={() => {
+                      if (confirm(`Delete ${selectedIds.size} product(s)? This cannot be undone.`)) {
+                        deleteMany.mutate({ ids: Array.from(selectedIds) });
+                      }
+                    }}
+                  >
+                    {deleteMany.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Trash2 className="w-4 h-4 mr-1" />}
+                    Delete
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {/* Filters row */}
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={filterCategory} onValueChange={v => { setFilterCategory(v === "__all__" ? "" : v); setPage(0); }}>
+                <SelectTrigger className="w-[160px] h-8 text-xs">
+                  <SelectValue placeholder="All categories" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All categories</SelectItem>
+                  {categories.map((cat: string) => (
+                    <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={filterStock} onValueChange={v => { setFilterStock(v === "__all__" ? "" : v); setPage(0); }}>
+                <SelectTrigger className="w-[140px] h-8 text-xs">
+                  <SelectValue placeholder="All stock" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All stock</SelectItem>
+                  <SelectItem value="in_stock">In Stock</SelectItem>
+                  <SelectItem value="low_stock">Low Stock</SelectItem>
+                  <SelectItem value="out_of_stock">Out of Stock</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-muted-foreground">£</span>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="Min"
+                  value={filterMinPrice}
+                  onChange={e => { setFilterMinPrice(e.target.value); setPage(0); }}
+                  className="w-[80px] h-8 text-xs"
+                />
+                <span className="text-xs text-muted-foreground">–</span>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="Max"
+                  value={filterMaxPrice}
+                  onChange={e => { setFilterMaxPrice(e.target.value); setPage(0); }}
+                  className="w-[80px] h-8 text-xs"
+                />
+              </div>
+
+              {(filterCategory || filterStock || filterMinPrice || filterMaxPrice) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={() => { setFilterCategory(""); setFilterStock(""); setFilterMinPrice(""); setFilterMaxPrice(""); setPage(0); }}
+                >
+                  <X className="w-3 h-3 mr-1" />
+                  Clear filters
+                </Button>
+              )}
+            </div>
           </div>
 
           {isLoading ? (
@@ -1265,7 +1358,7 @@ function CatalogTab() {
           ) : (
             <div className="text-center py-8 text-muted-foreground">
               <Package className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p>{searchQuery ? "No products match your search." : "No products in catalog. Upload a CSV or add one manually."}</p>
+              <p>{(searchQuery || filterCategory || filterStock || filterMinPrice || filterMaxPrice) ? "No products match your filters." : "No products in catalog. Upload a CSV or add one manually."}</p>
             </div>
           )}
         </CardContent>

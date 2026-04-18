@@ -42,6 +42,8 @@ import {
   createEmbedding,
   getAllProductsWithOptionalEmbeddings,
   deleteCategory,
+  getFilteredProducts,
+  getFilteredProductCount,
   getReviewsByProduct,
   getReviewStats,
   createReview,
@@ -152,14 +154,27 @@ export const appRouter = router({
       .input(z.object({
         limit: z.number().min(1).max(100).default(20),
         offset: z.number().min(0).default(0),
+        search: z.string().optional(),
+        category: z.string().optional(),
+        stock: z.enum(["in_stock", "low_stock", "out_of_stock"]).optional(),
+        minPrice: z.number().min(0).optional(),
+        maxPrice: z.number().min(0).optional(),
       }).optional())
       .query(async ({ input }) => {
-        const { limit = 20, offset = 0 } = input || {};
-        const [products, total] = await Promise.all([
+        const { limit = 20, offset = 0, search, category, stock, minPrice, maxPrice } = input || {};
+        const hasFilters = search || category || stock || minPrice !== undefined || maxPrice !== undefined;
+        if (hasFilters) {
+          const [filteredProducts, filteredTotal] = await Promise.all([
+            getFilteredProducts({ limit, offset, search, category, stock, minPrice, maxPrice }),
+            getFilteredProductCount({ search, category, stock, minPrice, maxPrice }),
+          ]);
+          return { products: filteredProducts, total: filteredTotal, limit, offset };
+        }
+        const [allProds, total] = await Promise.all([
           getAllProducts(limit, offset),
           getProductCount(),
         ]);
-        return { products, total, limit, offset };
+        return { products: allProds, total, limit, offset };
       }),
 
     getById: publicProcedure

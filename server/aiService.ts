@@ -161,33 +161,25 @@ function generateExplanation(
   breakdown: { semantic_score: number; rating_score: number; price_score: number; stock_score: number },
   matchedTerms: string[],
 ): string {
+  const MAX_PARTS = 3;
   const parts: string[] = [];
 
-  if (matchedTerms.length > 0) {
-    parts.push(`Matches: ${matchedTerms.slice(0, 4).join(", ")}`);
-  }
-  if (product.rating != null && product.rating >= 4.5) {
-    parts.push(`Highly rated (${product.rating.toFixed(1)}★)`);
-  } else if (product.rating != null && product.rating >= 4.0) {
-    parts.push(`Well rated (${product.rating.toFixed(1)}★)`);
-  }
-  if (breakdown.price_score > 0.7) {
-    parts.push("Great value");
-  } else if (breakdown.price_score > 0.5) {
-    parts.push("Good price");
-  }
-  if (product.availability === "in_stock") {
-    parts.push("In stock");
-  } else if (product.availability === "low_stock") {
-    parts.push("Limited stock");
-  }
-  if (breakdown.semantic_score > 0.8) {
-    parts.push("Strong semantic match");
-  } else if (breakdown.semantic_score > 0.6) {
-    parts.push("Good semantic match");
+  // 1. Relevance signal
+  if (breakdown.semantic_score > 0.6) {
+    parts.push(`${(breakdown.semantic_score * 100).toFixed(0)}% relevant`);
   }
 
-  return parts.length > 0 ? parts.join(" • ") : "Relevant to your search";
+  // 2. Rating
+  if (parts.length < MAX_PARTS && product.rating != null && product.rating >= 4.0) {
+    parts.push(`${product.rating.toFixed(1)}★`);
+  }
+
+  // 3. Price value
+  if (parts.length < MAX_PARTS && breakdown.price_score > 0.7) {
+    parts.push("Great value");
+  }
+
+  return parts.length > 0 ? parts.join(" · ") : "Relevant to your search";
 }
 
 // ============================================================================
