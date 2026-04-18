@@ -14,6 +14,20 @@ function safeStringify(value: unknown) {
   );
 }
 
+// Read cached user from localStorage so the first render already has auth state
+// (eliminates the "Sign in" → avatar flicker on page refresh).
+function getCachedUser() {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const raw = localStorage.getItem("auth-user-info");
+    if (!raw || raw === "null") return undefined;
+    const parsed = JSON.parse(raw);
+    return parsed ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function useAuth(options?: UseAuthOptions) {
   const { redirectOnUnauthenticated = false, redirectPath = getLoginUrl() } =
     options ?? {};
@@ -22,6 +36,8 @@ export function useAuth(options?: UseAuthOptions) {
   const meQuery = trpc.auth.me.useQuery(undefined, {
     retry: false,
     refetchOnWindowFocus: false,
+    // Seed from localStorage so the first render is already authenticated
+    initialData: getCachedUser,
   });
 
   const logoutMutation = trpc.auth.logout.useMutation({

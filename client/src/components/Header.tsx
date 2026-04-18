@@ -26,7 +26,7 @@ import {
 export default function Header() {
   const [searchQuery, setSearchQuery] = useState("");
   const [, setLocation] = useLocation();
-  const { user, isAuthenticated, logout } = useAuth();
+  const { user, isAuthenticated, loading: authLoading, logout } = useAuth();
   const { totalItems } = useCart();
 
   const handleSearch = (e: React.FormEvent) => {
@@ -143,6 +143,9 @@ export default function Header() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+          ) : authLoading ? (
+            /* Neutral placeholder while auth resolves — prevents "Sign In" flash */
+            <div className="h-10 w-10 rounded-full bg-muted animate-pulse" />
           ) : (
             <Button asChild variant="default" size="sm">
               <Link href="/login">Sign In</Link>
