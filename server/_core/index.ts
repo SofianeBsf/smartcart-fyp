@@ -8,7 +8,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { COOKIE_NAME, ONE_YEAR_MS, SESSION_EXPIRY_MS } from "@shared/const";
+import { COOKIE_NAME, SESSION_EXPIRY_MS } from "@shared/const";
 import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
 import * as db from "../db";
@@ -150,11 +150,11 @@ async function startServer() {
 
         const sessionToken = await sdk.createSessionToken(openId, {
           name,
-          expiresInMs: ONE_YEAR_MS,
+          expiresInMs: SESSION_EXPIRY_MS,
         });
 
         const cookieOptions = getSessionCookieOptions(req);
-        res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+        res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: SESSION_EXPIRY_MS });
 
         return res.json({ openId, name, email });
       } catch (e) {
@@ -188,11 +188,11 @@ async function startServer() {
 
         const sessionToken = await sdk.createSessionToken(openId, {
           name,
-          expiresInMs: ONE_YEAR_MS,
+          expiresInMs: SESSION_EXPIRY_MS,
         });
 
         const cookieOptions = getSessionCookieOptions(req);
-        res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+        res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: SESSION_EXPIRY_MS });
 
         const redirectParam = String(req.query.redirect ?? "/admin");
         const safeRedirect = redirectParam.startsWith("/") ? redirectParam : "/admin";

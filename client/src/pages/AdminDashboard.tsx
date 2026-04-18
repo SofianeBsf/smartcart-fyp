@@ -68,10 +68,6 @@ import Header from "@/components/Header";
 export default function AdminDashboard() {
   const [, setLocation] = useLocation();
   const { user, isAuthenticated, loading: authLoading } = useAuth();
-  const devLoginAttemptKey = "smartcart-admin-dev-login-attempted";
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [isUploading, setIsUploading] = useState(false);
 
   // Check admin access
   if (authLoading) {
@@ -82,22 +78,10 @@ export default function AdminDashboard() {
     );
   }
 
-  // Redirect unauthenticated users back to home so they can explicitly choose to sign in.
+  // Redirect unauthenticated users to login page
   if (!isAuthenticated || user?.role !== "admin") {
-    if (import.meta.env.DEV) {
-      const hasAttemptedDevLogin =
-        typeof window !== "undefined" &&
-        window.sessionStorage.getItem(devLoginAttemptKey) === "1";
-
-      if (!hasAttemptedDevLogin) {
-        window.sessionStorage.setItem(devLoginAttemptKey, "1");
-        window.location.href = "/api/auth/dev-login?redirect=/admin";
-        return null;
-      }
-    }
-
     if (!isAuthenticated) {
-      setLocation("/");
+      setLocation("/login?redirect=/admin");
       return null;
     }
 
@@ -111,21 +95,18 @@ export default function AdminDashboard() {
             <p className="text-muted-foreground mb-4">
               Your account ({user?.email}) does not have admin privileges.
             </p>
-            <Button onClick={() => {
-              window.sessionStorage.removeItem(devLoginAttemptKey);
-              window.location.href = "/api/auth/dev-login?redirect=/admin";
-            }}>
-              <RefreshCw className="w-4 h-4 mr-2" />
-              Login as Admin
-            </Button>
+            {import.meta.env.DEV && (
+              <Button onClick={() => {
+                window.location.href = "/api/auth/dev-login?redirect=/admin";
+              }}>
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Login as Admin (Dev)
+              </Button>
+            )}
           </Card>
         </div>
       </div>
     );
-  }
-
-  if (typeof window !== "undefined") {
-    window.sessionStorage.removeItem(devLoginAttemptKey);
   }
 
   return (

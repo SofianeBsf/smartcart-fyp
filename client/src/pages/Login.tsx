@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useLocation, Link, useSearch } from "wouter";
+import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -11,6 +12,7 @@ import { toast } from "sonner";
 
 export default function Login() {
   const [, setLocation] = useLocation();
+  const utils = trpc.useUtils();
   const searchString = useSearch();
   const redirectTo = useMemo(() => {
     const params = new URLSearchParams(searchString);
@@ -101,6 +103,9 @@ export default function Login() {
       } else {
         localStorage.removeItem("rememberEmail");
       }
+
+      // Invalidate auth cache so the header avatar updates immediately
+      await utils.auth.me.invalidate();
 
       const greeting = data.isFirstLogin ? "Welcome" : "Welcome back";
       toast.success(`${greeting}, ${data.user?.name || ""}!`);

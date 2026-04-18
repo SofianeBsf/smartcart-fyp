@@ -171,11 +171,19 @@ export default function ProductDetail() {
       <div className="container py-6">
         {/* Breadcrumb */}
         <div className="flex items-center gap-2 mb-6">
-          <Button variant="ghost" size="sm" asChild>
-            <Link href="/search">
-              <ArrowLeft className="w-4 h-4 mr-1" />
-              Back to Search
-            </Link>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              if (window.history.length > 1) {
+                window.history.back();
+              } else {
+                setLocation("/search");
+              }
+            }}
+          >
+            <ArrowLeft className="w-4 h-4 mr-1" />
+            Back to Search
           </Button>
           {product.category && (
             <>
