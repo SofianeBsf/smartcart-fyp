@@ -44,6 +44,8 @@ export default function Checkout() {
     }
   }, [user]);
 
+  const validateCart = trpc.checkout.validateCart.useMutation();
+
   const shipping = subtotal > 50 ? 0 : 5.99;
   const total = subtotal + shipping;
 
@@ -90,8 +92,6 @@ export default function Checkout() {
       </div>
     );
   }
-
-  const validateCart = trpc.checkout.validateCart.useMutation();
 
   const handlePlaceOrder = async () => {
     setIsProcessing(true);
