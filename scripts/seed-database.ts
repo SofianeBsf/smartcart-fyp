@@ -325,7 +325,7 @@ async function seedDatabase() {
   console.log("[5/5] Generating embeddings for products...");
   const { batchGenerateEmbeddings } = await import("../server/semanticSearch");
   const allProducts = await db.select({ id: products.id }).from(products);
-  const productIds = allProducts.map(p => p.id);
+  const productIds = allProducts.map((p: { id: number }) => p.id);
 
   console.log(`  Generating embeddings for ${productIds.length} products...`);
   const result = await batchGenerateEmbeddings(productIds, (completed, total) => {

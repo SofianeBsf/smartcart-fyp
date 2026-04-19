@@ -1,5 +1,5 @@
 # SmartCart Docker Compose
-# Architecture: Express+tRPC+Vite (app) + FastAPI+BGE (ai-service) + PostgreSQL
+# Architecture: Express+tRPC+Vite (app) + PostgreSQL
 #
 # Usage:
 #   docker compose up --build        # start everything
@@ -28,30 +28,6 @@ services:
     networks:
       - smartcart-net
 
-  # ── Python AI Service (FastAPI + BGE embeddings) ───────────────────
-  ai-service:
-    build:
-      context: ./ai-service
-      dockerfile: Dockerfile
-    container_name: smartcart-ai
-    ports:
-      - "8000:8000"
-    environment:
-      - PYTHONUNBUFFERED=1
-      - MODEL_NAME=BAAI/bge-small-en-v1.5
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 15
-      start_period: 90s
-    networks:
-      - smartcart-net
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-
   # ── Main App (Express + tRPC + Vite React frontend) ────────────────
   app:
     build:
@@ -64,15 +40,12 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - DATABASE_URL=postgresql://smartcart:smartcart_password@postgres:5432/smartcart
-      - AI_SERVICE_URL=http://ai-service:8000
       - JWT_SECRET=${JWT_SECRET:-smartcart-dev-secret-change-in-prod}
       - OWNER_OPEN_ID=${OWNER_OPEN_ID:-dev-admin}
       - BUILT_IN_FORGE_API_URL=${BUILT_IN_FORGE_API_URL:-}
       - BUILT_IN_FORGE_API_KEY=${BUILT_IN_FORGE_API_KEY:-}
     depends_on:
       postgres:
-        condition: service_healthy
-      ai-service:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/"]

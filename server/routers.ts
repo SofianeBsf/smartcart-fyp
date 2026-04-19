@@ -67,6 +67,7 @@ import { getSessionRecommendations, getSimilarProducts, getTrendingProducts } fr
 import { evaluateSearchQuery, calculateAllMetrics, generateAutoRelevanceJudgments, type SearchResult } from "./irMetrics";
 import { notifyOwner } from "./_core/notification";
 import { handleChatMessage } from "./chatbot";
+import type { Product, SearchLog } from "../drizzle/schema";
 
 // Session cookie name for anonymous tracking
 const SESSION_COOKIE = "smartcart_session";
@@ -272,7 +273,7 @@ export const appRouter = router({
         const keywordStartTime = Date.now();
         const keywordProducts = await searchProductsByKeyword(input.query, input.limit);
 
-        const filteredKeywordProducts = keywordProducts.filter((product) => {
+        const filteredKeywordProducts = keywordProducts.filter((product: Product) => {
           const productPrice = Number(product.price) || 0;
 
           if (input.category && product.category?.toLowerCase() !== input.category.toLowerCase()) {
@@ -292,7 +293,7 @@ export const appRouter = router({
         });
 
         return {
-          results: filteredKeywordProducts.map((product, index) => ({
+          results: filteredKeywordProducts.map((product: Product, index: number) => ({
             product,
             scores: {
               final: 0.5,
@@ -686,8 +687,8 @@ export const appRouter = router({
       embeddingHealth: adminProcedure.query(async () => {
         const sampleRows = await getAllProductsWithOptionalEmbeddings(10, 0);
         const samples = sampleRows
-          .filter(row => Array.isArray(row.embedding) && (row.embedding as number[]).length > 0)
-          .map(row => ({
+          .filter((row: { product: Product; embedding: number[] | null }) => Array.isArray(row.embedding) && (row.embedding as number[]).length > 0)
+          .map((row: { product: Product; embedding: number[] | null }) => ({
             id: row.product.id,
             text: [
               row.product.title,
@@ -756,7 +757,7 @@ export const appRouter = router({
 
       generateAllEmbeddings: adminProcedure.mutation(async () => {
         const products = await getAllProducts(10000, 0);
-        const productIds = products.map(p => p.id);
+        const productIds = products.map((p: Product) => p.id);
         const errors: string[] = [];
 
         try {
@@ -858,8 +859,8 @@ export const appRouter = router({
             if (input.generateEmbeddings) {
               const allProducts = await getAllProducts(10000, 0);
               const newProductIds = allProducts
-                .filter(p => input.products.some(ip => ip.title === p.title))
-                .map(p => p.id);
+                .filter((p: Product) => input.products.some((ip: { title: string }) => ip.title === p.title))
+                .map((p: Product) => p.id);
               
               const embeddingResult = await batchGenerateEmbeddings(newProductIds);
               
@@ -926,7 +927,7 @@ export const appRouter = router({
         ]);
 
         const avgResponseTime = searchLogs.length > 0
-          ? searchLogs.reduce((sum, log) => sum + (log.responseTimeMs || 0), 0) / searchLogs.length
+          ? searchLogs.reduce((sum: number, log: SearchLog) => sum + (log.responseTimeMs || 0), 0) / searchLogs.length
           : 0;
 
         return {

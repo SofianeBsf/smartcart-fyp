@@ -4,9 +4,8 @@
  * All embedding and scoring is done in-process using Hugging Face Transformers.js
  * (BAAI/bge-small-en-v1.5). No external Python service required.
  *
- * Ported from the Python FastAPI service (ai-service/main.py) to eliminate
- * the network hop, cold-start latency, and operational dependency on a
- * separate process.
+ * Eliminates the need for any external service — everything runs in the
+ * same Node.js process.
  */
 
 import * as localEmbedding from "./localEmbedding";

@@ -16,41 +16,32 @@ SmartCart addresses the limitations of traditional keyword-based search engines 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Frontend                                 │
-│                    (Next.js + React)                            │
+│                    (React + Vite)                               │
 │                      Port: 3000                                  │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Backend Orchestrator                          │
-│                   (tRPC + Express)                              │
-│                      Port: 3001                                  │
+│              Backend (tRPC + Express + Transformers.js)          │
+│              Local BGE Embeddings · Port: 3000                   │
 └─────────────────────────────────────────────────────────────────┘
-                    │                   │
-                    ▼                   ▼
-┌───────────────────────┐   ┌───────────────────────────────────┐
-│     AI Service        │   │         Database Layer             │
-│  (FastAPI + Python)   │   │                                    │
-│  Sentence-BERT        │   │  ┌─────────────┐  ┌─────────────┐ │
-│  Port: 8000           │   │  │ PostgreSQL  │  │   Redis     │ │
-└───────────────────────┘   │  │ + pgvector  │  │  (Cache)    │ │
-                            │  │ Port: 5432  │  │ Port: 6379  │ │
-                            │  └─────────────┘  └─────────────┘ │
-                            └───────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    PostgreSQL (Neon)                              │
+│                      pgvector                                    │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ## Tech Stack
 
 | Component | Technology | Purpose |
 |-----------|------------|---------|
-| Frontend | Next.js + React + TypeScript | User interface |
+| Frontend | React + Vite + TypeScript + Tailwind | User interface |
 | Backend | tRPC + Express | API orchestration |
-| AI Service | FastAPI + Python | Semantic embeddings |
-| ML Model | Sentence-BERT (all-MiniLM-L6-v2) | 384-dim embeddings |
-| Database | PostgreSQL + pgvector | Vector similarity search |
-| Cache | Redis | Search result caching |
-| Queue | BullMQ | Background job processing |
-| Container | Docker + Docker Compose | Deployment |
+| Embeddings | Transformers.js (BAAI/bge-small-en-v1.5) | 384-dim local embeddings |
+| Database | PostgreSQL + pgvector (Neon) | Vector similarity search |
+| Container | Docker + Docker Compose | Local development |
 
 ## Features
 
@@ -103,14 +94,9 @@ docker-compose logs -f
 pnpm install
 
 # Start the database (requires Docker)
-docker-compose up -d postgres redis
+docker-compose up -d postgres
 
-# Start the AI service
-cd ai-service
-pip install -r requirements.txt
-uvicorn main:app --host 0.0.0.0 --port 8000
-
-# Start the main application (in another terminal)
+# Start the main application
 pnpm dev
 
 # Run tests
@@ -121,13 +107,6 @@ pnpm test
 
 ### Search API
 - `POST /api/trpc/search.semantic` - Semantic search with explainable ranking
-
-### AI Service API
-- `POST /embed` - Generate embedding for text
-- `POST /embed/batch` - Batch embedding generation
-- `POST /search` - Semantic search with ranking
-- `POST /similar` - Find similar products
-- `GET /health` - Health check
 
 ### Admin API
 - `POST /api/trpc/admin.catalog.upload` - Upload product catalog
@@ -161,10 +140,6 @@ The system supports standard Information Retrieval metrics:
 
 ```
 smartcart-fyp/
-├── ai-service/              # FastAPI Python AI service
-│   ├── main.py              # Main application
-│   ├── requirements.txt     # Python dependencies
-│   └── Dockerfile           # AI service container
 ├── client/                  # React frontend
 │   ├── src/
 │   │   ├── components/      # Reusable UI components
@@ -175,7 +150,8 @@ smartcart-fyp/
 │   ├── db.ts                # Database queries
 │   ├── semanticSearch.ts    # Search logic
 │   ├── recommendations.ts   # Recommendation engine
-│   ├── aiService.ts         # AI service client
+│   ├── aiService.ts         # Local embedding service
+│   ├── localEmbedding.ts    # Transformers.js BGE model
 │   └── irMetrics.ts         # IR metrics calculation
 ├── drizzle/                 # Database schema
 ├── scripts/                 # Utility scripts
@@ -201,9 +177,10 @@ pnpm test --coverage
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `DATABASE_URL` | PostgreSQL connection string | - |
-| `REDIS_URL` | Redis connection string | redis://localhost:6379 |
-| `AI_SERVICE_URL` | FastAPI AI service URL | http://localhost:8000 |
 | `JWT_SECRET` | JWT signing secret | - |
+| `BUILT_IN_FORGE_API_URL` | Gemini API endpoint | - |
+| `BUILT_IN_FORGE_API_KEY` | Gemini API key | - |
+| `BASE_URL` | Frontend URL for email links | http://localhost:3000 |
 
 ## License
 

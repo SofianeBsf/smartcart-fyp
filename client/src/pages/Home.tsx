@@ -174,7 +174,7 @@ export default function Home() {
             </div>
           ) : featuredProducts && featuredProducts.length > 0 ? (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {featuredProducts.map((product) => (
+              {featuredProducts.map((product: { id: number; title: string; description?: string | null; imageUrl?: string | null; price?: string | null; originalPrice?: string | null; currency?: string | null; rating?: string | null; reviewCount?: number | null; availability?: "in_stock" | "low_stock" | "out_of_stock" | null; category?: string | null; brand?: string | null }) => (
                 <ProductCard key={product.id} product={product} />
               ))}
             </div>

@@ -298,7 +298,7 @@ export default function ProductDetail() {
               <div>
                 <h3 className="font-semibold mb-2">Features</h3>
                 <ul className="space-y-1">
-                  {product.features.map((feature, index) => (
+                  {product.features.map((feature: string, index: number) => (
                     <li key={index} className="flex items-start gap-2 text-muted-foreground">
                       <Check className="w-4 h-4 text-green-500 mt-0.5 shrink-0" />
                       {feature}

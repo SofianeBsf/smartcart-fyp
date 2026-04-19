@@ -10,6 +10,29 @@ import {
 import * as localEmbedding from "./localEmbedding";
 import type { Product, RankingWeight } from "../drizzle/schema";
 
+/** Shape returned by getAllProductsWithOptionalEmbeddings */
+interface ProductWithEmbedding {
+  product: Product;
+  embedding: number[] | null;
+}
+
+/** Shape produced by the scoring loop inside semanticSearch */
+interface ScoredProduct {
+  product: Product;
+  scores: {
+    final: number;
+    semantic: number;
+    rating: number;
+    price: number;
+    stock: number;
+    recency: number;
+    keyword: number;
+  };
+  matchedTerms: string[];
+  explanation: string;
+  position: number;
+}
+
 /**
  * Embedding dimension for the BGE-small-en-v1.5 model.
  */
@@ -473,7 +496,7 @@ export async function semanticSearch(
 
   // Build corpus IDF on first search if not already built
   if (!corpusBuilt && productsWithEmbeddings.length > 0) {
-    const productTexts = productsWithEmbeddings.map(({ product }) =>
+    const productTexts = productsWithEmbeddings.map(({ product }: ProductWithEmbedding) =>
       `${product.title} ${product.description || ""} ${product.category || ""} ${product.subcategory || ""}`
     );
     buildCorpusIDF(productTexts);
@@ -502,13 +525,13 @@ export async function semanticSearch(
 
   // Calculate price range for normalization
   const prices = productsWithEmbeddings
-    .map(p => Number(p.product.price) || 0)
-    .filter(p => p > 0);
+    .map((p: ProductWithEmbedding) => Number(p.product.price) || 0)
+    .filter((p: number) => p > 0);
   const minPriceInSet = Math.min(...prices, 0);
   const maxPriceInSet = Math.max(...prices, 1);
 
   // Score all products with hybrid semantic + keyword ranking.
-  let scoredProducts = productsWithEmbeddings.map(({ product, embedding }) => {
+  let scoredProducts: ScoredProduct[] = productsWithEmbeddings.map(({ product, embedding }: ProductWithEmbedding) => {
     // Semantic score: cosine similarity between query and product embeddings.
     let rawSemantic = 0;
     if (Array.isArray(embedding) && embedding.length === queryEmbedding.length) {
@@ -560,31 +583,31 @@ export async function semanticSearch(
   // Apply filters
   if (category) {
     scoredProducts = scoredProducts.filter(
-      p => p.product.category?.toLowerCase() === category.toLowerCase()
+      (p: ScoredProduct) => p.product.category?.toLowerCase() === category.toLowerCase()
     );
   }
   if (minPrice !== undefined) {
     scoredProducts = scoredProducts.filter(
-      p => Number(p.product.price) >= minPrice
+      (p: ScoredProduct) => Number(p.product.price) >= minPrice
     );
   }
   if (maxPrice !== undefined) {
     scoredProducts = scoredProducts.filter(
-      p => Number(p.product.price) <= maxPrice
+      (p: ScoredProduct) => Number(p.product.price) <= maxPrice
     );
   }
   if (inStockOnly) {
     scoredProducts = scoredProducts.filter(
-      p => p.product.availability !== "out_of_stock"
+      (p: ScoredProduct) => p.product.availability !== "out_of_stock"
     );
   }
 
   // Filter by minimum score and sort
   const results = scoredProducts
-    .filter(p => p.scores.final >= minScore)
-    .sort((a, b) => b.scores.final - a.scores.final)
+    .filter((p: ScoredProduct) => p.scores.final >= minScore)
+    .sort((a: ScoredProduct, b: ScoredProduct) => b.scores.final - a.scores.final)
     .slice(0, limit)
-    .map((result, index) => ({
+    .map((result: ScoredProduct, index: number) => ({
       ...result,
       position: index + 1,
       explanation: generateExplanation(result.product, result.scores, result.matchedTerms, weights),
@@ -605,7 +628,7 @@ export async function semanticSearch(
   // Save explanations for evaluation
   if (searchLogId && results.length > 0) {
     await saveSearchExplanations(
-      results.map(r => ({
+      results.map((r: ScoredProduct) => ({
         searchLogId,
         productId: r.product.id,
         position: r.position,
@@ -690,7 +713,7 @@ export async function batchGenerateEmbeddings(
     const chunkIds = productIds.slice(offset, offset + CHUNK_SIZE);
     try {
       const products = await getProductsByIds(chunkIds);
-      const byId = new Map(products.map(p => [p.id, p]));
+      const byId = new Map(products.map((p: Product) => [p.id, p]));
       const texts = chunkIds.map(id => {
         const p = byId.get(id);
         return p ? buildProductText(p) : "";

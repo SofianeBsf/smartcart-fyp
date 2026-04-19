@@ -10,17 +10,16 @@ This guide covers two things:
 
 ### What is Docker?
 
-Think of Docker as a "box" that packages your entire app — code, database, Python AI service — into isolated containers. Instead of installing PostgreSQL, Python, Node.js separately on your machine, Docker runs everything inside containers that are pre-configured and ready to go. Docker Desktop gives you a nice GUI to see and manage these containers.
+Think of Docker as a "box" that packages your entire app — code, database — into isolated containers. Instead of installing PostgreSQL, Node.js separately on your machine, Docker runs everything inside containers that are pre-configured and ready to go. Docker Desktop gives you a nice GUI to see and manage these containers.
 
 ### What You'll Get
 
-When you run `docker compose up`, Docker creates **3 containers**:
+When you run `docker compose up`, Docker creates **2 containers**:
 
 | Container | What it does | Port |
 |-----------|-------------|------|
 | `smartcart-postgres` | PostgreSQL database (no row limits!) | localhost:5432 |
-| `smartcart-ai` | Python AI service (BGE embeddings) | localhost:8000 |
-| `smartcart-app` | Your web app (Express + React) | localhost:3000 |
+| `smartcart-app` | Your web app (Express + React + local AI embeddings) | localhost:3000 |
 
 ### Step 1 — Install Docker Desktop
 
@@ -52,11 +51,10 @@ docker compose up --build
 
 **What happens:**
 1. Docker downloads PostgreSQL (1 minute)
-2. Docker builds the Python AI service and downloads the BGE model (5–10 minutes first time)
-3. Docker builds the Node app (3–5 minutes first time)
-4. Everything starts up and connects together
+2. Docker builds the Node app and downloads the BGE embedding model (5–10 minutes first time)
+3. Everything starts up and connects together
 
-You'll see logs from all 3 services. Wait until you see something like:
+You'll see logs from both services. Wait until you see something like:
 ```
 smartcart-app  | Server running on port 3000
 ```
@@ -85,12 +83,11 @@ Run these from your project folder:
 | `docker compose down` | Stop all containers |
 | `docker compose down -v` | Stop and **delete all database data** |
 | `docker compose logs -f app` | Follow logs for just the web app |
-| `docker compose logs -f ai-service` | Follow logs for just the AI service |
 | `docker compose restart app` | Restart just the web app |
 
 ### Viewing Containers in Docker Desktop
 
-After running `docker compose up`, open Docker Desktop. You'll see a group called `smartcart-fyp` with 3 containers inside. You can click on any container to see its logs, stop it, restart it, etc. Green = running, red = stopped.
+After running `docker compose up`, open Docker Desktop. You'll see a group called `smartcart-fyp` with 2 containers inside. You can click on any container to see its logs, stop it, restart it, etc. Green = running, red = stopped.
 
 ### Stopping Everything
 
@@ -104,8 +101,6 @@ docker compose down
 **"port 5432 already in use"** — You have PostgreSQL running locally. Either stop it, or change the port in docker-compose.yml from `"5432:5432"` to `"5433:5432"`.
 
 **"Cannot connect to the Docker daemon"** — Docker Desktop isn't running. Open it first.
-
-**AI service keeps restarting** — Check logs with `docker compose logs ai-service`. If it says "Killed" or "OOM", your machine doesn't have enough RAM free. Close other apps and try again, or increase Docker's memory limit in Docker Desktop → Settings → Resources → Memory → set to 4GB+.
 
 **Build fails at npm install** — Delete `node_modules` and try again:
 ```bash
@@ -123,8 +118,7 @@ This section walks you through deploying SmartCart on the internet for free usin
 
 | Service | Host | Cost |
 |---------|------|------|
-| Web App (Node + React) | Render.com | Free |
-| AI Service (Python + BGE) | Render.com | Free |
+| Web App (Node + React + AI) | Render.com | Free |
 | PostgreSQL Database | Neon (your existing one) | Free |
 
 Your app will be live at something like `https://smartcart-app.onrender.com`.
@@ -178,9 +172,7 @@ echo ".env" >> .gitignore
 
 ---
 
-## Step 3 — Deploy the Python AI Service (do this first)
-
-We deploy the AI service first because the web app needs its URL.
+## Step 3 — Deploy the Web App
 
 1. In Render dashboard, click **New** → **Web Service**
 2. Connect your GitHub repo
@@ -188,31 +180,8 @@ We deploy the AI service first because the web app needs its URL.
 
 | Setting | Value |
 |---------|-------|
-| **Name** | `smartcart-ai` |
-| **Region** | Pick the closest to London (e.g., Frankfurt) |
-| **Branch** | `main` |
-| **Root Directory** | `ai-service` |
-| **Runtime** | `Docker` |
-| **Instance Type** | `Free` |
-
-4. Click **Create Web Service**
-
-The first build takes 10–15 minutes (it downloads the AI model). Wait until the status shows **Live**.
-
-5. Copy the service URL — it'll look like: `https://smartcart-ai.onrender.com`
-
----
-
-## Step 4 — Deploy the Web App (Node + React)
-
-1. In Render dashboard, click **New** → **Web Service**
-2. Connect the same GitHub repo
-3. Configure:
-
-| Setting | Value |
-|---------|-------|
 | **Name** | `smartcart-app` |
-| **Region** | Same as the AI service |
+| **Region** | Pick the closest to London (e.g., Frankfurt) |
 | **Branch** | `main` |
 | **Runtime** | `Node` |
 | **Build Command** | `npm install --include=dev && npm run build` |
@@ -226,7 +195,7 @@ The first build takes 10–15 minutes (it downloads the AI model). Wait until th
 | `NODE_ENV` | `production` |
 | `DATABASE_URL` | Your Neon URL (starts with `postgresql://...neon.tech/...`) |
 | `JWT_SECRET` | Click "Generate" to create a random value |
-| `AI_SERVICE_URL` | The URL from Step 3 (e.g., `https://smartcart-ai.onrender.com`) |
+| `BASE_URL` | Your Render app URL (e.g., `https://smartcart-app.onrender.com`) |
 | `BUILT_IN_FORGE_API_URL` | `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` |
 | `BUILT_IN_FORGE_API_KEY` | Your Gemini API key |
 
@@ -234,17 +203,19 @@ The first build takes 10–15 minutes (it downloads the AI model). Wait until th
 
 Build takes 3–5 minutes. Once it says **Live**, your app is on the internet!
 
+> **Note:** The BGE embedding model is loaded in-process on first request (~10–20 seconds). Subsequent requests are fast.
+
 ---
 
-## Step 5 — Seed Your Products (if needed)
+## Step 4 — Seed Your Products (if needed)
 
-Your Neon database already has your products. If you want to regenerate embeddings for the deployed AI service:
+Your Neon database already has your products. If you want to regenerate embeddings:
 
 1. Visit `https://smartcart-app.onrender.com` (your deployed URL)
 2. Log in as admin
 3. Go to Admin Dashboard → click **Regenerate All Embeddings**
 
-This re-generates embeddings using the deployed AI service so semantic search works.
+This re-generates embeddings using the in-process BGE model so semantic search works.
 
 ---
 
@@ -253,34 +224,17 @@ This re-generates embeddings using the deployed AI service so semantic search wo
 ### "Service is starting..." for a long time
 Free-tier services take a while on first deploy. Wait 15 minutes. Check the **Logs** tab in Render for progress.
 
-### AI Service runs out of memory (OOM)
-The BGE model + PyTorch needs ~500MB. If it crashes on the free tier (512MB limit):
-- **Option A:** The web app still works — search falls back to keyword matching, and the chatbot still works via Gemini.
-- **Option B:** Deploy the AI service on **Hugging Face Spaces** instead (free, 16GB RAM). See the "Hugging Face Alternative" section below.
-
 ### Search returns wrong results
-Make sure you clicked "Regenerate All Embeddings" from the Admin Dashboard after deploying. The embeddings need to be generated by the same model version running on Render.
+Make sure you clicked "Regenerate All Embeddings" from the Admin Dashboard after deploying. The embeddings need to be generated by the same model version.
 
 ### Chatbot says "I'm having trouble connecting"
 Check that `BUILT_IN_FORGE_API_URL` and `BUILT_IN_FORGE_API_KEY` are set correctly in the Render environment variables.
 
 ---
 
-## Hugging Face Spaces Alternative (if AI service needs more RAM)
-
-If the Python AI service crashes on Render's free tier due to memory, use Hugging Face Spaces instead:
-
-1. Go to https://huggingface.co/spaces and create a new Space
-2. Choose **Docker** as the SDK
-3. Upload your `ai-service/` folder contents
-4. HF Spaces gives you 2 CPU cores + 16GB RAM for free
-5. Once deployed, update the `AI_SERVICE_URL` in Render to point to your HF Space URL
-
----
-
 ## Updating Your Deployment
 
-Every time you push to `main` on GitHub, Render automatically rebuilds and redeploys both services. Just:
+Every time you push to `main` on GitHub, Render automatically rebuilds and redeploys. Just:
 
 ```bash
 git add .
@@ -297,7 +251,6 @@ That's it — Render handles the rest.
 | What | URL |
 |------|-----|
 | Your live app | `https://smartcart-app.onrender.com` |
-| AI service | `https://smartcart-ai.onrender.com` |
 | Render dashboard | https://dashboard.render.com |
 | Neon dashboard | https://console.neon.tech |
 | Gemini API console | https://aistudio.google.com/apikey |

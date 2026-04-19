@@ -8,7 +8,7 @@ import {
   getTopInteractedProductIds,
 } from "./db";
 import { cosineSimilarity } from "./semanticSearch";
-import type { Product } from "../drizzle/schema";
+import type { Product, Interaction } from "../drizzle/schema";
 
 export interface RecommendationResult {
   product: Product;
@@ -74,7 +74,7 @@ export async function getSessionRecommendations(
   // Calculate product scores based on interactions
   const productScores = new Map<number, { score: number; type: string }>();
 
-  interactions.forEach((interaction, index) => {
+  interactions.forEach((interaction: Interaction, index: number) => {
     const weight = interactionWeights[interaction.interactionType] || 1;
     const recencyBoost = 1 + (interactions.length - index) / interactions.length;
     const score = weight * recencyBoost;
@@ -287,9 +287,9 @@ async function getColdStartRecommendations(
   const excludeSet = new Set(excludeProductIds);
 
   const fromFeatured = featured
-    .filter(p => !excludeSet.has(p.id))
+    .filter((p: Product) => !excludeSet.has(p.id))
     .slice(0, limit)
-    .map(product => ({
+    .map((product: Product) => ({
       product,
       score: 1,
       reason: "Popular product",
@@ -300,14 +300,14 @@ async function getColdStartRecommendations(
   // Top up with trending (most-interacted) if we don't have enough featured
   const topIds = await getTopInteractedProductIds(limit * 2);
   const topIdsFiltered = topIds.filter(
-    id => !excludeSet.has(id) && !fromFeatured.some(f => f.product.id === id),
+    (id: number) => !excludeSet.has(id) && !fromFeatured.some((f: { product: Product; score: number; reason: string }) => f.product.id === id),
   );
   if (topIdsFiltered.length === 0) return fromFeatured;
 
   const topProducts = await getProductsByIds(topIdsFiltered.slice(0, limit - fromFeatured.length));
   return [
     ...fromFeatured,
-    ...topProducts.map(product => ({
+    ...topProducts.map((product: Product) => ({
       product,
       score: 0.8,
       reason: "Trending now",
@@ -332,12 +332,12 @@ async function getCategoryBasedRecommendations(
   const allProducts = await getProductsWithEmbeddings();
 
   return allProducts
-    .filter(p =>
+    .filter((p: { product: Product; embedding: unknown }) =>
       p.product.id !== productId &&
       p.product.category === product.category
     )
     .slice(0, limit)
-    .map(({ product: p }) => ({
+    .map(({ product: p }: { product: Product; embedding: unknown }) => ({
       product: p,
       score: 0.5,
       reason: `Same category: ${product.category}`,
@@ -378,7 +378,7 @@ export async function getTrendingProducts(limit = 10): Promise<RecommendationRes
 
   if (topIds.length === 0) {
     const featured = await getFeaturedProducts(limit);
-    return featured.map((product, index) => ({
+    return featured.map((product: Product, index: number) => ({
       product,
       score: 1 - (index * 0.05),
       reason: "Featured product",
@@ -387,9 +387,9 @@ export async function getTrendingProducts(limit = 10): Promise<RecommendationRes
 
   const products = await getProductsByIds(topIds.slice(0, limit));
   const order = new Map(topIds.map((id, idx) => [id, idx]));
-  products.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+  products.sort((a: Product, b: Product) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
 
-  return products.map((product, index) => ({
+  return products.map((product: Product, index: number) => ({
     product,
     score: 1 - index * 0.05,
     reason: "Trending now",

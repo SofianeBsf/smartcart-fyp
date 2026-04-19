@@ -85,7 +85,7 @@ export type Product = typeof products.$inferSelect;
 export type InsertProduct = typeof products.$inferInsert;
 
 /**
- * If you DON'T have `product_embeddings` table in Postgres, remove this block.
+ * Product embeddings for semantic vector search.
  */
 export const productEmbeddings = pgTable("product_embeddings", {
   id: serial("id").primaryKey(),
@@ -138,10 +138,7 @@ export const interactions = pgTable("interactions", {
 export type Interaction = typeof interactions.$inferSelect;
 export type InsertInteraction = typeof interactions.$inferInsert;
 
-/**
- * ✅ COMPAT EXPORT (FIXES YOUR DOCKER BUILD)
- * server/db.ts imports `sessionInteractions`, so we alias it to `interactions`.
- */
+/** Alias used by server/db.ts */
 export const sessionInteractions = interactions;
 export type SessionInteraction = Interaction;
 export type InsertSessionInteraction = InsertInteraction;

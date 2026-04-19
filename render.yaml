@@ -16,22 +16,8 @@ services:
         sync: false          # you'll paste your Neon URL here
       - key: JWT_SECRET
         generateValue: true  # Render generates a random secret
-      - key: AI_SERVICE_URL
-        fromService:
-          type: web
-          name: smartcart-ai
-          property: url      # auto-links to the AI service URL
       - key: BUILT_IN_FORGE_API_URL
         sync: false          # paste your Gemini API URL
       - key: BUILT_IN_FORGE_API_KEY
         sync: false          # paste your Gemini API key
     healthCheckPath: /
-
-  # ── Python AI Service (FastAPI + BGE) ───────────────────────────────
-  - type: web
-    name: smartcart-ai
-    runtime: docker
-    plan: free
-    dockerfilePath: ./ai-service/Dockerfile
-    dockerContext: ./ai-service
-    healthCheckPath: /health

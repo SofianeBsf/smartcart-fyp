@@ -574,20 +574,20 @@ function CatalogTab() {
   const total = productList?.total || 0;
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
-  const allVisibleIds = filtered.map(p => p.id);
-  const allSelected = allVisibleIds.length > 0 && allVisibleIds.every(id => selectedIds.has(id));
+  const allVisibleIds = filtered.map((p: { id: number }) => p.id);
+  const allSelected = allVisibleIds.length > 0 && allVisibleIds.every((id: number) => selectedIds.has(id));
 
   const toggleAll = () => {
     if (allSelected) {
       setSelectedIds(prev => {
         const next = new Set(prev);
-        allVisibleIds.forEach(id => next.delete(id));
+        allVisibleIds.forEach((id: number) => next.delete(id));
         return next;
       });
     } else {
       setSelectedIds(prev => {
         const next = new Set(prev);
-        allVisibleIds.forEach(id => next.add(id));
+        allVisibleIds.forEach((id: number) => next.add(id));
         return next;
       });
     }
@@ -1117,7 +1117,7 @@ function CatalogTab() {
             <div className="mt-6">
               <h4 className="text-sm font-medium mb-3">Recent Uploads</h4>
               <div className="space-y-2">
-                {uploadJobs.map((job) => (
+                {uploadJobs.map((job: { id: number; status: string; filename: string; processedRows: number | null; totalRows: number | null; embeddedRows: number | null }) => (
                   <div key={job.id} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
                     <div className="flex items-center gap-3">
                       {job.status === "completed" ? <CheckCircle className="w-4 h-4 text-green-500" /> : job.status === "failed" ? <AlertCircle className="w-4 h-4 text-red-500" /> : <Loader2 className="w-4 h-4 animate-spin" />}
@@ -1279,7 +1279,7 @@ function CatalogTab() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtered.map((product) => (
+                  {filtered.map((product: { id: number; title: string; category: string | null; price: string | null; rating: string | null; availability: string | null; imageUrl: string | null; isFeatured: boolean | null }) => (
                     <TableRow key={product.id} className={selectedIds.has(product.id) ? "bg-primary/5" : ""}>
                       <TableCell>
                         <Checkbox
@@ -1583,7 +1583,7 @@ function IRMetricsBadge({ searchLogId }: { searchLogId: number }) {
   if (isLoading) return <div className="h-4 w-16 bg-muted animate-pulse rounded" />;
   if (!metrics || metrics.length === 0) return <span className="text-xs text-muted-foreground">-</span>;
 
-  const ndcg = metrics.find(m => m.metricType === "ndcg@10")?.value;
+  const ndcg = metrics.find((m: { metricType: string; value: string }) => m.metricType === "ndcg@10")?.value;
   
   return (
     <Badge variant="outline" className="font-mono text-[10px] bg-blue-50 text-blue-700 border-blue-200">
@@ -1626,7 +1626,7 @@ function LogsTab() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {searchLogs.map((log) => (
+              {searchLogs.map((log: { id: number; query: string; resultsCount: number | null; responseTimeMs: number | null; sessionId: string; createdAt: string }) => (
                 <TableRow key={log.id}>
                   <TableCell className="font-medium max-w-[300px] truncate">
                     {log.query}
