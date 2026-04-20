@@ -48,6 +48,11 @@ export default function Search() {
   const [submittedQuery, setSubmittedQuery] = useState(urlQuery);
   const [showFilters, setShowFilters] = useState(false);
 
+  // Scroll to top on mount / URL change
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [searchParams]);
+
   // Sync when URL query changes (e.g. header search bar navigates here)
   useEffect(() => {
     if (urlQuery && urlQuery !== submittedQuery) {

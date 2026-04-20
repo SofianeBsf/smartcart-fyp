@@ -348,8 +348,8 @@ export default function ProductDetail() {
                         </Button>
                       </div>
                       <Link href="/cart">
-                        <Button size="lg" variant="outline" className="flex-1">
-                          View Cart
+                        <Button size="lg" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white">
+                          View in Cart
                         </Button>
                       </Link>
                     </>
@@ -375,6 +375,7 @@ export default function ProductDetail() {
                         productId: product.id,
                         interactionType: "add_to_cart",
                       });
+                      toast.success("Added to cart");
                     }}
                   >
                     <ShoppingCart className="w-5 h-5 mr-2" />

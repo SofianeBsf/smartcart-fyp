@@ -2,7 +2,7 @@ import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Star, Package, ShoppingCart, Award } from "lucide-react";
+import { Star, Package, ShoppingCart, Award, Plus, Minus, Trash2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCart } from "@/hooks/useCart";
 import { toast } from "sonner";
@@ -44,7 +44,9 @@ export default function ProductCard({
   featured = false,
 }: ProductCardProps) {
   const recordInteraction = trpc.session.recordInteraction.useMutation();
-  const { addItem } = useCart();
+  const { items: cartItems, addItem, updateQuantity, removeItem } = useCart();
+  const cartItem = cartItems.find(i => i.productId === product.id);
+  const qty = cartItem?.quantity || 0;
 
   const handleClick = () => {
     recordInteraction.mutate({
@@ -208,14 +210,57 @@ export default function ProductCard({
               {getAvailabilityBadge(product.availability)}
             </div>
             {showAddToCart && product.availability !== "out_of_stock" && (
-              <Button
-                size="sm"
-                className="w-full mt-3"
-                onClick={handleAddToCart}
-              >
-                <ShoppingCart className="w-4 h-4 mr-2" />
-                Add to Cart
-              </Button>
+              qty > 0 ? (
+                <div className="mt-3 flex flex-col gap-2" onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-0 border rounded-md overflow-hidden">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="rounded-none px-2 h-8"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (qty === 1) {
+                            removeItem(product.id);
+                          } else {
+                            updateQuantity(product.id, qty - 1);
+                          }
+                        }}
+                      >
+                        {qty === 1 ? <Trash2 className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
+                      </Button>
+                      <span className="px-3 text-sm font-semibold min-w-[2rem] text-center">{qty}</span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="rounded-none px-2 h-8"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          updateQuantity(product.id, qty + 1);
+                        }}
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                  <Link href="/cart" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+                    <Button size="sm" className="w-full bg-blue-600 hover:bg-blue-700 text-white">
+                      View in Cart
+                    </Button>
+                  </Link>
+                </div>
+              ) : (
+                <Button
+                  size="sm"
+                  className="w-full mt-3"
+                  onClick={handleAddToCart}
+                >
+                  <ShoppingCart className="w-4 h-4 mr-2" />
+                  Add to Cart
+                </Button>
+              )
             )}
           </div>
         </CardContent>
