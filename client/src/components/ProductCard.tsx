@@ -1,8 +1,9 @@
+import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Star, Package, ShoppingCart, Award, Plus, Minus, Trash2 } from "lucide-react";
+import { Star, Package, ShoppingCart, Award, Plus, Minus, Trash2, Check } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCart } from "@/hooks/useCart";
 import { toast } from "sonner";
@@ -48,6 +49,12 @@ export default function ProductCard({
   const cartItem = cartItems.find(i => i.productId === product.id);
   const qty = cartItem?.quantity || 0;
 
+  const [justAdded, setJustAdded] = useState(false);
+  const justAddedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  // Clean up timer on unmount
+  useEffect(() => () => { clearTimeout(justAddedTimer.current); }, []);
+
   const handleClick = () => {
     recordInteraction.mutate({
       productId: product.id,
@@ -69,6 +76,8 @@ export default function ProductCard({
     });
     recordInteraction.mutate({ productId: product.id, interactionType: "add_to_cart" });
     toast.success("Added to cart");
+    setJustAdded(true);
+    justAddedTimer.current = setTimeout(() => setJustAdded(false), 1200);
   };
 
   const formatPrice = (price: string | null | undefined, currency: string | null | undefined) => {
@@ -210,7 +219,15 @@ export default function ProductCard({
               {getAvailabilityBadge(product.availability)}
             </div>
             {showAddToCart && product.availability !== "out_of_stock" && (
-              qty > 0 ? (
+              justAdded ? (
+                <Button
+                  size="sm"
+                  className="w-full mt-3 bg-green-600 hover:bg-green-600 text-white animate-[pulse_0.3s_ease-in-out] pointer-events-none"
+                >
+                  <Check className="w-4 h-4 mr-2" />
+                  Added!
+                </Button>
+              ) : qty > 0 ? (
                 <div className="mt-3 flex flex-col gap-2" onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-0 border rounded-md overflow-hidden">
@@ -246,7 +263,8 @@ export default function ProductCard({
                     </div>
                   </div>
                   <Link href="/cart" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
-                    <Button size="sm" className="w-full bg-blue-600 hover:bg-blue-700 text-white">
+                    <Button size="sm" variant="outline" className="w-full border-blue-600 text-blue-600 hover:bg-blue-50">
+                      <ShoppingCart className="w-3.5 h-3.5 mr-2" />
                       View in Cart
                     </Button>
                   </Link>
