@@ -796,6 +796,9 @@ async function startServer() {
 
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
+
+    // Eagerly preload the embedding model so the first search is fast
+    import("../aiService").then(ai => ai.preloadModel()).catch(() => {});
   });
 }
 

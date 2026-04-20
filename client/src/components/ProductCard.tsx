@@ -1,8 +1,11 @@
 import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Star, Package } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Star, Package, ShoppingCart, Award } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { useCart } from "@/hooks/useCart";
+import { toast } from "sonner";
 
 interface Product {
   id: number;
@@ -27,16 +30,21 @@ interface ProductCardProps {
   showExplanation?: boolean;
   explanation?: string;
   position?: number;
+  showAddToCart?: boolean;
+  featured?: boolean;
 }
 
-export default function ProductCard({ 
-  product, 
+export default function ProductCard({
+  product,
   compact = false,
   showExplanation = false,
   explanation,
-  position
+  position,
+  showAddToCart = false,
+  featured = false,
 }: ProductCardProps) {
   const recordInteraction = trpc.session.recordInteraction.useMutation();
+  const { addItem } = useCart();
 
   const handleClick = () => {
     recordInteraction.mutate({
@@ -44,6 +52,21 @@ export default function ProductCard({
       interactionType: "click",
       position,
     });
+  };
+
+  const handleAddToCart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const productImage = product.imageUrl || product.image_url || product.image || "";
+    addItem({
+      productId: product.id,
+      title: product.title,
+      price: product.price ? parseFloat(product.price) : 0,
+      imageUrl: productImage,
+      quantity: 1,
+    });
+    recordInteraction.mutate({ productId: product.id, interactionType: "add_to_cart" });
+    toast.success("Added to cart");
   };
 
   const formatPrice = (price: string | null | undefined, currency: string | null | undefined) => {
@@ -115,7 +138,13 @@ export default function ProductCard({
               <Package className="w-12 h-12 text-muted-foreground" />
             </div>
           )}
-          {position && (
+          {featured && (
+            <div className="absolute top-2 left-2 flex items-center gap-1 bg-yellow-500 text-white text-xs font-bold px-2 py-1 rounded-md shadow-sm">
+              <Award className="w-3 h-3" />
+              Featured
+            </div>
+          )}
+          {!featured && position && (
             <div className="absolute top-2 left-2 w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center">
               {position}
             </div>
@@ -178,6 +207,16 @@ export default function ProductCard({
               </div>
               {getAvailabilityBadge(product.availability)}
             </div>
+            {showAddToCart && product.availability !== "out_of_stock" && (
+              <Button
+                size="sm"
+                className="w-full mt-3"
+                onClick={handleAddToCart}
+              >
+                <ShoppingCart className="w-4 h-4 mr-2" />
+                Add to Cart
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>

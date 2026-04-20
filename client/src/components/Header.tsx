@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useCart } from "@/hooks/useCart";
+import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -25,15 +26,47 @@ import {
 
 export default function Header() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [debouncedSuggestQuery, setDebouncedSuggestQuery] = useState("");
+  const suggestRef = useRef<HTMLDivElement>(null);
   const [, setLocation] = useLocation();
   const { user, isAuthenticated, loading: authLoading, logout } = useAuth();
   const { totalItems } = useCart();
 
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSuggestQuery(searchQuery.trim().length >= 2 ? searchQuery.trim() : "");
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  const { data: suggestions } = trpc.products.suggest.useQuery(
+    { query: debouncedSuggestQuery, limit: 6 },
+    { enabled: debouncedSuggestQuery.length >= 2 && showSuggestions }
+  );
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (suggestRef.current && !suggestRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
+    setShowSuggestions(false);
     if (searchQuery.trim()) {
       setLocation(`/search?q=${encodeURIComponent(searchQuery.trim())}`);
     }
+  };
+
+  const handleSuggestionClick = (title: string) => {
+    setSearchQuery(title);
+    setShowSuggestions(false);
+    setLocation(`/search?q=${encodeURIComponent(title)}`);
   };
 
   const handleLogout = async () => {
@@ -59,15 +92,38 @@ export default function Header() {
 
         {/* Search Bar */}
         <form onSubmit={handleSearch} className="flex-1 max-w-xl">
-          <div className="relative">
+          <div className="relative" ref={suggestRef}>
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               type="text"
               placeholder="Search products..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setShowSuggestions(true);
+              }}
+              onFocus={() => setShowSuggestions(true)}
               className="pl-10 pr-4 h-10"
+              autoComplete="off"
             />
+            {showSuggestions && suggestions && suggestions.length > 0 && searchQuery.trim().length >= 2 && (
+              <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-background border rounded-md shadow-lg overflow-hidden">
+                {suggestions.map((s: { id: number; title: string; category: string | null }) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    className="w-full text-left px-3 py-2 hover:bg-muted flex items-center gap-2 text-sm transition-colors"
+                    onClick={() => handleSuggestionClick(s.title)}
+                  >
+                    <Search className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <span className="truncate">{s.title}</span>
+                    {s.category && (
+                      <span className="ml-auto text-xs text-muted-foreground shrink-0">{s.category}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </form>
 

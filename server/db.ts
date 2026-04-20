@@ -779,6 +779,24 @@ export async function getFilteredProductCount(params: ProductFilterParams) {
   return result[0]?.count ?? 0;
 }
 
+export async function getSearchSuggestions(query: string, limit = 8) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const searchTerm = `%${query.trim()}%`;
+  return db.select({
+    id: products.id,
+    title: products.title,
+    category: products.category,
+  })
+    .from(products)
+    .where(
+      sql`${products.title} ILIKE ${searchTerm}
+        OR coalesce(${products.category}, '') ILIKE ${searchTerm}`
+    )
+    .limit(limit);
+}
+
 export async function searchProductsByKeyword(keyword: string, limit = 20) {
   const db = await getDb();
   if (!db) return [];

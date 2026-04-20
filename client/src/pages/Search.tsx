@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useLocation, useSearch } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,7 @@ import {
   Sparkles,
   Info,
   X,
+  Star,
 } from "lucide-react";
 import Header from "@/components/Header";
 import ProductCard from "@/components/ProductCard";
@@ -41,6 +42,7 @@ export default function Search() {
   // Parse URL params
   const urlParams = useMemo(() => new URLSearchParams(searchParams), [searchParams]);
   const urlQuery = urlParams.get("q") || "";
+  const showFeatured = urlParams.get("featured") === "true";
 
   const [searchQuery, setSearchQuery] = useState(urlQuery);
   const [submittedQuery, setSubmittedQuery] = useState(urlQuery);
@@ -62,6 +64,12 @@ export default function Search() {
 
   // Fetch categories
   const { data: categories } = trpc.products.categories.useQuery();
+
+  // Fetch featured products when ?featured=true and no search query
+  const { data: featuredProducts, isLoading: featuredLoading } = trpc.products.featured.useQuery(
+    { limit: 20 },
+    { enabled: showFeatured && !submittedQuery }
+  );
 
   // Semantic search query
   const { 
@@ -93,11 +101,46 @@ export default function Search() {
     }
   }, [submittedQuery, category, inStockOnly, setLocation]);
 
+  // Search suggestions
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [debouncedSuggestQuery, setDebouncedSuggestQuery] = useState("");
+  const suggestRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSuggestQuery(searchQuery.trim().length >= 2 ? searchQuery.trim() : "");
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  const { data: suggestions } = trpc.products.suggest.useQuery(
+    { query: debouncedSuggestQuery, limit: 6 },
+    { enabled: debouncedSuggestQuery.length >= 2 && showSuggestions }
+  );
+
+  // Close suggestions on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (suggestRef.current && !suggestRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
+    setShowSuggestions(false);
     if (searchQuery.trim()) {
       setSubmittedQuery(searchQuery.trim());
     }
+  };
+
+  const handleSuggestionClick = (title: string) => {
+    setSearchQuery(title);
+    setSubmittedQuery(title);
+    setShowSuggestions(false);
   };
 
   const clearFilters = () => {
@@ -142,15 +185,38 @@ export default function Search() {
         {/* Search Header */}
         <div className="mb-6">
           <form onSubmit={handleSearch} className="flex gap-2 mb-4">
-            <div className="relative flex-1">
+            <div className="relative flex-1" ref={suggestRef}>
               <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 type="text"
                 placeholder="Search with natural language..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setShowSuggestions(true);
+                }}
+                onFocus={() => setShowSuggestions(true)}
                 className="pl-10"
+                autoComplete="off"
               />
+              {showSuggestions && suggestions && suggestions.length > 0 && searchQuery.trim().length >= 2 && (
+                <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-background border rounded-md shadow-lg overflow-hidden">
+                  {suggestions.map((s: { id: number; title: string; category: string | null }) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      className="w-full text-left px-3 py-2 hover:bg-muted flex items-center gap-2 text-sm transition-colors"
+                      onClick={() => handleSuggestionClick(s.title)}
+                    >
+                      <SearchIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                      <span className="truncate">{s.title}</span>
+                      {s.category && (
+                        <span className="ml-auto text-xs text-muted-foreground shrink-0">{s.category}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <Button type="submit" disabled={isFetching}>
               {isFetching ? "Searching..." : "Search"}
@@ -420,6 +486,7 @@ export default function Search() {
                         showExplanation
                         explanation={result.explanation}
                         position={'rank' in result ? result.rank : ('position' in result ? result.position : 0)}
+                        showAddToCart
                       />
 
                       {/* Score Breakdown (Collapsible) */}
@@ -455,13 +522,37 @@ export default function Search() {
                   </Button>
                 </div>
               </Card>
+            ) : showFeatured && featuredProducts && featuredProducts.length > 0 ? (
+              <div>
+                <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                  <Star className="w-5 h-5 text-yellow-500" />
+                  All Featured Products
+                </h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {featuredProducts.map((product: { id: number; title: string; description?: string | null; imageUrl?: string | null; price?: string | null; originalPrice?: string | null; currency?: string | null; rating?: string | null; reviewCount?: number | null; availability?: "in_stock" | "low_stock" | "out_of_stock" | null; category?: string | null; brand?: string | null }) => (
+                    <ProductCard key={product.id} product={product} showAddToCart featured />
+                  ))}
+                </div>
+              </div>
+            ) : showFeatured && featuredLoading ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <Card key={i} className="overflow-hidden">
+                    <Skeleton className="aspect-square" />
+                    <CardContent className="p-4">
+                      <Skeleton className="h-4 w-3/4 mb-2" />
+                      <Skeleton className="h-4 w-1/2" />
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
             ) : (
               <Card className="p-12 text-center">
                 <div className="max-w-md mx-auto">
                   <Sparkles className="w-12 h-12 text-primary mx-auto mb-4" />
                   <h3 className="text-lg font-semibold mb-2">Start Searching</h3>
                   <p className="text-muted-foreground">
-                    Enter a natural language query to discover products. 
+                    Enter a natural language query to discover products.
                     Try something like "wireless headphones with good bass" or "comfortable office chair under £200".
                   </p>
                 </div>

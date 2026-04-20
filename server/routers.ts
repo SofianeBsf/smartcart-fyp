@@ -42,6 +42,7 @@ import {
   createEmbedding,
   getAllProductsWithOptionalEmbeddings,
   deleteCategory,
+  getSearchSuggestions,
   getFilteredProducts,
   getFilteredProductCount,
   getReviewsByProduct,
@@ -211,6 +212,12 @@ export const appRouter = router({
       }))
       .query(async ({ input }) => {
         return searchProductsByKeyword(input.keyword, input.limit);
+      }),
+
+    suggest: publicProcedure
+      .input(z.object({ query: z.string().min(1), limit: z.number().min(1).max(10).default(8) }))
+      .query(async ({ input }) => {
+        return getSearchSuggestions(input.query, input.limit);
       }),
   }),
 

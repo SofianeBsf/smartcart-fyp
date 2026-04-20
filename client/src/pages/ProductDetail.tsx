@@ -70,6 +70,10 @@ export default function ProductDetail() {
   const recordInteraction = trpc.session.recordInteraction.useMutation();
 
   useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [productId]);
+
+  useEffect(() => {
     if (productId > 0) {
       recordInteraction.mutate({
         productId,

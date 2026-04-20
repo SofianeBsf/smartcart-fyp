@@ -154,7 +154,7 @@ export default function Home() {
                 Hand-picked products with top ratings
               </p>
             </div>
-            <Button variant="outline" onClick={() => setLocation("/search")}>
+            <Button variant="outline" onClick={() => setLocation("/search?featured=true")}>
               View All
               <ArrowRight className="ml-2 w-4 h-4" />
             </Button>
@@ -175,7 +175,7 @@ export default function Home() {
           ) : featuredProducts && featuredProducts.length > 0 ? (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {featuredProducts.map((product: { id: number; title: string; description?: string | null; imageUrl?: string | null; price?: string | null; originalPrice?: string | null; currency?: string | null; rating?: string | null; reviewCount?: number | null; availability?: "in_stock" | "low_stock" | "out_of_stock" | null; category?: string | null; brand?: string | null }) => (
-                <ProductCard key={product.id} product={product} />
+                <ProductCard key={product.id} product={product} featured showAddToCart />
               ))}
             </div>
           ) : (
