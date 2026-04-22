@@ -284,7 +284,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   } = params;
 
   const payload: Record<string, unknown> = {
-    model: "gpt-4o-mini",
+    model: ENV.forgeModel,
     messages: messages.map(normalizeMessage),
   };
 
