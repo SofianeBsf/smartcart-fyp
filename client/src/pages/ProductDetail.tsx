@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useParams, Link, useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { useCart } from "@/hooks/useCart";
@@ -44,11 +44,7 @@ export default function ProductDetail() {
   const [, setLocation] = useLocation();
   const productId = parseInt(id || "0", 10);
   const [addedToCart, setAddedToCart] = useState(false);
-  const [justAdded, setJustAdded] = useState(false);
-  const justAddedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const { items: cartItems, addItem: addToCart, updateQuantity, removeItem } = useCart();
-
-  useEffect(() => () => { clearTimeout(justAddedTimer.current); }, []);
   const { isInWishlist, toggleItem: toggleWishlist } = useWishlist();
   const { isAuthenticated } = useAuth();
 
@@ -322,18 +318,6 @@ export default function ProductDetail() {
                 const cartItem = cartItems.find(i => i.productId === product.id);
                 const qty = cartItem?.quantity || 0;
 
-                if (justAdded) {
-                  return (
-                    <Button
-                      size="lg"
-                      className="flex-1 bg-green-600 hover:bg-green-600 text-white animate-[pulse_0.3s_ease-in-out] pointer-events-none"
-                    >
-                      <Check className="w-5 h-5 mr-2" />
-                      Added!
-                    </Button>
-                  );
-                }
-
                 if (qty > 0) {
                   return (
                     <>
@@ -364,8 +348,7 @@ export default function ProductDetail() {
                         </Button>
                       </div>
                       <Link href="/cart">
-                        <Button size="lg" variant="outline" className="flex-1 border-blue-600 text-blue-600 hover:bg-blue-50">
-                          <ShoppingCart className="w-5 h-5 mr-2" />
+                        <Button size="lg" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white">
                           View in Cart
                         </Button>
                       </Link>
@@ -388,8 +371,6 @@ export default function ProductDetail() {
                         quantity: 1,
                       });
                       setAddedToCart(true);
-                      setJustAdded(true);
-                      justAddedTimer.current = setTimeout(() => setJustAdded(false), 1200);
                       recordInteraction.mutate({
                         productId: product.id,
                         interactionType: "add_to_cart",
