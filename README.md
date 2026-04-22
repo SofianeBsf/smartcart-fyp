@@ -67,7 +67,6 @@ SmartCart addresses the limitations of traditional keyword-based search engines 
 ### Prerequisites
 - Docker and Docker Compose
 - Node.js 22+ (for local development)
-- Python 3.11+ (for AI service development)
 
 ### Using Docker (Recommended)
 
@@ -83,8 +82,7 @@ docker-compose up -d
 docker-compose logs -f
 
 # Access the application
-# Frontend: http://localhost:3000
-# AI Service Docs: http://localhost:8000/docs
+# http://localhost:3000
 ```
 
 ### Local Development
@@ -190,4 +188,4 @@ This project is developed as part of the BSc Computer Science Final Year Project
 
 **Sofiane Boussouf** (w2064559)  
 Supervisor: Kosmas Kosmopoulos  
-University of Westminster, 2025
+University of Westminster, 2026
