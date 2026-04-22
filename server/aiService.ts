@@ -258,6 +258,7 @@ export async function semanticSearchViaAI(
     minPrice?: number;
     maxPrice?: number;
     category?: string;
+    minSemanticScore?: number;
   }
 ): Promise<SemanticSearchResponse> {
   const startTime = Date.now();
@@ -301,6 +302,12 @@ export async function semanticSearchViaAI(
     // Semantic score: cosine similarity clamped to [0,1]
     const rawSim = cosineSimilarity(queryEmbedding, productEmbedding);
     const semanticScore = Math.max(0, Math.min(1, rawSim));
+
+    // Reject products that are semantically unrelated — prevents high-rated
+    // accessories from outranking genuinely relevant items via the beta/gamma terms.
+    if (options?.minSemanticScore != null && semanticScore < options.minSemanticScore) {
+      continue;
+    }
 
     // Rating score
     const ratingScore = (product.rating || 0) / 5.0;

@@ -125,7 +125,47 @@ function classifyIntent(message: string): Intent {
   return "unknown";
 }
 
-// ─── Context Retrieval ───────────────────────────────────────────────
+// ─── Query Extraction ────────────────────────────────────────────────
+
+const SEARCH_FILLER_PATTERNS: RegExp[] = [
+  /\b(i'?m?|i\s+am)\s+(looking\s+for|searching\s+for|trying\s+to\s+find|want\s+to\s+buy|interested\s+in)\b/gi,
+  /\b(do\s+you\s+have|show\s+me|find\s+me|give\s+me|can\s+you\s+(show|find)|are\s+there\s+any|have\s+you\s+got)\b/gi,
+  /\b(i\s+(want|need|would\s+like|'d\s+like)(\s+to\s+(buy|get|see|find))?)\b/gi,
+  /\b(please|thanks|thank\s+you|hello|hi|hey|any)\b/gi,
+];
+
+/** Strip conversational filler so "i am looking for laptops" → "laptops" */
+function extractSearchQuery(message: string): string {
+  let q = message;
+  for (const pattern of SEARCH_FILLER_PATTERNS) {
+    q = q.replace(pattern, " ");
+  }
+  q = q.replace(/\s{2,}/g, " ").trim();
+  return q.length >= 2 ? q : message.trim();
+}
+
+/**
+ * Explicit product-category hints for terms that embedding models commonly
+ * conflate (e.g. paper "notebook" vs laptop "notebook computer").
+ */
+const CATEGORY_HINTS: Array<{ terms: RegExp; category: string }> = [
+  { terms: /\blaptops?\b/i, category: "laptop" },
+  { terms: /\bnotebook\s+computer/i, category: "laptop" },
+  { terms: /\bsmartphones?\b|\bphones?\b|\bmobiles?\b/i, category: "phone" },
+  { terms: /\btablets?\b|\bipads?\b/i, category: "tablet" },
+  { terms: /\bheadphones?\b|\bearphones?\b|\bearbuds?\b/i, category: "headphone" },
+  { terms: /\btelevisions?\b|\btvs?\b/i, category: "tv" },
+  { terms: /\bcameras?\b/i, category: "camera" },
+];
+
+function detectCategoryHint(query: string): string | undefined {
+  for (const { terms, category } of CATEGORY_HINTS) {
+    if (terms.test(query)) return category;
+  }
+  return undefined;
+}
+
+// ─── Context Retrieval ────────────────────────────────────────────────
 
 export interface ProductCard {
   id: number;
@@ -147,7 +187,14 @@ interface ChatContext {
 }
 
 async function searchProducts(query: string, limit = 6): Promise<ProductCard[]> {
-  // Try semantic search first (requires Python AI service)
+  // Strip conversational filler so the embedding/SQL sees the actual product term.
+  // e.g. "i am looking for laptops" → "laptops"
+  const cleanQuery = extractSearchQuery(query);
+  // If the clean query explicitly names a known category (laptop, phone, …),
+  // pass it as a pre-filter so semantically-adjacent accessories are excluded
+  // before scoring begins.
+  const categoryHint = detectCategoryHint(query);
+
   const aiUp = await checkAIServiceHealth();
   if (aiUp) {
     try {
@@ -164,10 +211,17 @@ async function searchProducts(query: string, limit = 6): Promise<ProductCard[]> 
         }),
       );
       const result = await semanticSearchViaAI(
-        query,
+        cleanQuery,
         aiProducts,
         weights ? fromDBWeights(weights) : undefined,
-        { limit },
+        {
+          limit,
+          category: categoryHint,
+          // Reject products whose cosine similarity is below 0.30 so that
+          // high-rated accessories don't outrank genuinely relevant items via
+          // the rating/price terms in the scoring formula.
+          minSemanticScore: 0.30,
+        },
       );
       if (result.results.length > 0) {
         return result.results.map((r) => {
@@ -188,8 +242,10 @@ async function searchProducts(query: string, limit = 6): Promise<ProductCard[]> 
     }
   }
 
-  // Keyword fallback
-  const kw = await searchProductsByKeyword(query, limit);
+  // Keyword fallback — use the clean query, NOT the raw message.
+  // Raw message ("i am looking for laptops") produces an ILIKE pattern that
+  // will never match any product title/description/category.
+  const kw = await searchProductsByKeyword(cleanQuery, limit);
   return kw.map((p: any) => ({
     id: p.id,
     title: p.title,
@@ -312,6 +368,13 @@ RULES:
 - Do NOT make up information about products not in the catalog.
 - If the user asks something outside your scope, politely redirect them.
 
+CRITICAL RELEVANCE GATE — apply this before listing anything:
+Before presenting a product from MATCHING PRODUCTS, verify it directly satisfies the user's request category.
+- A paper notebook, journal, or stationery is NOT a laptop computer. Never list it when the user asks for laptops.
+- A bag, backpack, sleeve, or case is an accessory — do not present it as the device itself unless the user asked for bags/accessories.
+- If the user asks for "phones", only list smartphones — not phone cases, chargers, or earphones.
+- If NONE of the listed products genuinely match the user's stated category, say: "I couldn't find [item] in our catalog right now. Try browsing the shop directly or use a different search term." Do NOT list unrelated products to avoid an empty response.
+
 PRODUCT REFERENCE FORMAT:
 When mentioning a product, always include [ID:X] so the frontend can render a clickable card. Example: "I'd recommend the **Sony WH-1000XM5** [ID:42] — £299 (4.8★)"`;
 
@@ -391,21 +454,27 @@ export async function handleChatMessage(req: ChatRequest): Promise<ChatResponse>
           : "I'm sorry, I couldn't generate a response. Please try again.";
   } catch (error) {
     console.error("[Chatbot] LLM call failed:", error);
-    // Provide a useful fallback even if the LLM is down
-    if (context.products.length > 0) {
-      reply =
-        `I found some products that might interest you:\n\n` +
-        context.products
-          .slice(0, 4)
-          .map(
-            (p) =>
-              `• **${p.title}** [ID:${p.id}] — ${p.price ? `£${p.price}` : "Price N/A"} (${p.rating ?? "?"}/5★)`,
-          )
-          .join("\n") +
-        "\n\nClick on any product to view more details!";
-    } else if (intent === "greeting") {
+    if (intent === "greeting") {
       reply =
         "Hi there! Welcome to Pick N Take. I can help you find products, check your cart, or answer questions about shopping. What are you looking for today?";
+    } else if (context.products.length > 0) {
+      // Only show retrieved products that pass a basic title/category check
+      // against the clean query. This prevents the fallback from silently
+      // presenting accessories or wrong-category items when the LLM is down.
+      const cleanQuery = extractSearchQuery(message);
+      const queryTerms = cleanQuery.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+      const relevant = context.products.filter((p) => {
+        const searchable = `${p.title} ${p.category ?? ""}`.toLowerCase();
+        return queryTerms.some((term) => searchable.includes(term));
+      });
+      const toShow = (relevant.length > 0 ? relevant : context.products).slice(0, 4);
+      const label = relevant.length > 0 ? `Here are some ${cleanQuery} I found` : "Here are some products that might interest you";
+      reply =
+        `${label}:\n\n` +
+        toShow
+          .map((p) => `• **${p.title}** [ID:${p.id}] — ${p.price ? `£${p.price}` : "Price N/A"} (${p.rating ?? "?"}/5★)`)
+          .join("\n") +
+        "\n\nClick on any product to view more details!";
     } else {
       reply =
         "I'm having trouble connecting to my AI brain right now, but I'm still here! Try asking me to find a specific product, and I'll search the catalog for you.";
