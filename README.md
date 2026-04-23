@@ -62,43 +62,12 @@ SmartCart addresses the limitations of traditional keyword-based search engines 
 - ✅ IR metrics calculation (nDCG@10, Recall@10, Precision@10, MRR)
 - ✅ Ranking explanation storage
 
-## Quick Start
-
-### Prerequisites
-- Docker and Docker Compose
-- Node.js 22+ (for local development)
-
-### Using Docker (Recommended)
+## How to open my code locally
 
 ```bash
 # Clone the repository
 git clone <repository-url>
 cd smartcart-fyp
-
-# Start all services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Access the application
-# http://localhost:3000
-```
-
-### Local Development
-
-```bash
-# Install dependencies
-pnpm install
-
-# Start the database (requires Docker)
-docker-compose up -d postgres
-
-# Start the main application
-pnpm dev
-
-# Run tests
-pnpm test
 ```
 
 ## API Endpoints
@@ -157,19 +126,6 @@ smartcart-fyp/
 └── README.md                # This file
 ```
 
-## Testing
-
-```bash
-# Run all tests
-pnpm test
-
-# Run specific test file
-pnpm test server/semanticSearch.test.ts
-
-# Run with coverage
-pnpm test --coverage
-```
-
 ## Environment Variables
 
 | Variable | Description | Default |
@@ -178,7 +134,7 @@ pnpm test --coverage
 | `JWT_SECRET` | JWT signing secret | - |
 | `BUILT_IN_FORGE_API_URL` | Gemini API endpoint | - |
 | `BUILT_IN_FORGE_API_KEY` | Gemini API key | - |
-| `BASE_URL` | Frontend URL for email links | http://localhost:3000 |
+| `BASE_URL` | Frontend URL for email links | - |
 
 ## License
 
